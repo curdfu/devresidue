@@ -1,0 +1,6 @@
+# DevResidue is built against stable Rust.
+# rustup reads this file and automatically selects the pinned channel.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

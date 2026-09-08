@@ -1,0 +1,18 @@
+# BEGIN oh-my-opencode-slim clonedeps
+.slim/clonedeps/repos/
+# END oh-my-opencode-slim clonedeps
+
+# Rust
+/target/
+Cargo.lock.bak
+
+# Node (future Tauri UI)
+node_modules/
+dist/
+
+# Portable distribution output (rebuild via release build, do not commit)
+dist-portable/
+
+# Editor
+.vscode/
+.idea/

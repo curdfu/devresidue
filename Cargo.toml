@@ -1,0 +1,40 @@
+# DevResidue workspace manifest.
+#
+# Architecture (see doc/spec/DevResidue_SPEC_CN_v0.3.md §4/§5):
+#   devresidue-core               -> platform-neutral domain model + safety contracts
+#   devresidue-providers          -> discovery-only providers (never delete)
+#   devresidue-platform-windows   -> Windows-specific capabilities (Phase 4)
+#   devresidue-cli                -> CLI binary "devresidue"
+#
+# Hard constraints enforced by this layout:
+#   * Core never depends on Tauri / React / WebView.
+#   * No code path may accept an arbitrary path for deletion.
+#   * CleanupEngine (Phase 6) is the single deletion authority.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/devresidue-core",
+    "crates/devresidue-providers",
+    "crates/devresidue-platform-windows",
+    "crates/devresidue-cli",
+]
+# The Tauri shell lives outside the workspace: it depends on the crates but
+# must not be part of the Core/provider build graph (Core never depends on
+# Tauri; src-tauri is the shell and owns its own Cargo.lock + target dir).
+exclude = ["src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+authors = ["DevResidue Contributors"]
+
+# Shared defaults; per-crate overrides live in each crate's own manifest.
+[profile.dev]
+debug = true
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

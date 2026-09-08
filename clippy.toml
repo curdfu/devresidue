@@ -1,0 +1,3 @@
+# clippy configuration for DevResidue.
+# Kept intentionally empty for now: default lint levels apply.
+# Phase 15 (hardening) may raise the bar for safety-critical crates.
