@@ -1,0 +1,20 @@
+# Built-in permanent protected paths — Claude Code credential/config faces
+# (SPEC §9 / §18, INV-002 / INV-007).
+rules:
+  - id: builtin-protected/claude-credentials
+    description: Claude Code credentials JSON (OAuth tokens, API keys)
+    product: Claude Code
+    category: credential
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%USERPROFILE%/.claude/.credentials*.json"
+
+  - id: builtin-protected/claude-config
+    description: Claude Code settings / config files under the agent root
+    product: Claude Code
+    category: configuration
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%USERPROFILE%/.claude/settings*.json"

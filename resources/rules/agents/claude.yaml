@@ -1,0 +1,50 @@
+# Claude Code data layout rules (builtin detection).
+#
+# SPEC §9: agent roots are never classified as a single SAFE item — every rule
+# below targets a fine-grained sub-layout (cache / sessions / temp), never
+# `%USERPROFILE%\.claude` as a whole.
+rules:
+  - id: builtin-detection/claude-shell-snapshots-cache
+    description: Claude Code shell-snapshot cache (regenerated on demand)
+    product: Claude Code
+    category: ai-agent
+    risk: safe
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.claude/shell-snapshots"
+
+  - id: builtin-detection/claude-session-history
+    description: "Claude Code per-project session transcripts (may hold useful \
+      context, review before any cleanup)"
+    product: Claude Code
+    category: session
+    risk: review
+    source: builtin-detection
+    match:
+      glob: "%USERPROFILE%/.claude/projects/*"
+    # Refinement example: exclude stays inert at depth 1 (`projects/*` only
+    # matches direct children); the semantics are exercised in unit tests
+    # against deeper glob rules.
+    exclude:
+      - "**/.trash/**"
+
+  - id: builtin-detection/claude-project-trash-cache
+    description: Claude Code trash/interrupt caches under session projects
+    product: Claude Code
+    category: temporary
+    risk: safe
+    source: builtin-detection
+    match:
+      glob: "%USERPROFILE%/.claude/projects/*/.trash/**"
+
+  - id: builtin-detection/claude-agent-cache-narrowed
+    description: "Cache sub-layout of the agent dir, narrowed by include \
+      (SPEC §9 compliant, never the whole `.claude` root)"
+    product: Claude Code
+    category: ai-agent
+    risk: safe
+    source: builtin-detection
+    match:
+      glob: "%USERPROFILE%/.claude/*"
+    include:
+      - "shell-snapshots/**"

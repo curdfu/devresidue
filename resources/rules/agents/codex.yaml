@@ -1,0 +1,30 @@
+# Codex CLI data-layout detection rules (SPEC §9 builtin detection).
+# Classification follows the agent provider's fine-grained split; these rules
+# exist so the rule engine independently recognises the same sub-layouts.
+rules:
+  - id: builtin-detection/codex-temp
+    description: Codex temporary working files (regenerated on demand)
+    product: Codex CLI
+    category: temporary
+    risk: safe
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.codex/.tmp"
+
+  - id: builtin-detection/codex-session-history
+    description: Codex conversation session history (review before cleanup)
+    product: Codex CLI
+    category: session
+    risk: review
+    source: builtin-detection
+    match:
+      glob: "%USERPROFILE%/.codex/sessions/**"
+
+  - id: builtin-detection/codex-computer-use-cache
+    description: Codex computer-use screen captures -- may contain sensitive on-screen content
+    product: Codex CLI
+    category: session
+    risk: review
+    source: builtin-detection
+    match:
+      glob: "%USERPROFILE%/.codex/cache/computer-use/**"

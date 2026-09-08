@@ -1,0 +1,22 @@
+[package]
+name = "devresidue-providers"
+description = "DevResidue discovery-only residue providers (never delete)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+devresidue-core = { path = "../devresidue-core" }
+kondo-lib = "=0.9.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+# R3-G06: the default (Win32 LockFileEx) generation-lock adapter.
+devresidue-platform-windows = { path = "../devresidue-platform-windows" }
+
+[dev-dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"

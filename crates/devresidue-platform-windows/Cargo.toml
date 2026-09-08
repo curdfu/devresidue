@@ -1,0 +1,29 @@
+[package]
+name = "devresidue-platform-windows"
+description = "DevResidue Windows-specific capabilities (path/filesystem/identity/process/shell/recycle-bin)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+devresidue-core = { path = "../devresidue-core" }
+thiserror = "2"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_SystemServices",
+    "Win32_UI_Shell",
+    "Win32_Security_Cryptography",
+] }
+
+[dev-dependencies]
+
+[lints.rust]
+unsafe_code = "deny"

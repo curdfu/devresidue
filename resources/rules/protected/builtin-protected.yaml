@@ -1,0 +1,49 @@
+# Built-in permanent protected paths (SPEC §18, INV-002 / INV-007).
+# Each entry protects a user-profile sub-directory that holds credentials.
+# Protected-source rules must declare `risk: protected` (enforced by the
+# validator) and can never be overridden by user/community rules (SPEC §14).
+rules:
+  - id: builtin-protected/ssh
+    description: SSH keys, config and known_hosts
+    product: OpenSSH
+    category: credential
+    risk: protected
+    source: builtin-protected
+    match:
+      exact: "%USERPROFILE%/.ssh"
+
+  - id: builtin-protected/gnupg
+    description: GPG keyrings and trust database
+    product: GnuPG
+    category: credential
+    risk: protected
+    source: builtin-protected
+    match:
+      exact: "%USERPROFILE%/.gnupg"
+
+  - id: builtin-protected/aws
+    description: AWS credentials and config
+    product: AWS CLI
+    category: credential
+    risk: protected
+    source: builtin-protected
+    match:
+      exact: "%USERPROFILE%/.aws"
+
+  - id: builtin-protected/azure
+    description: Azure CLI credentials
+    product: Azure CLI
+    category: credential
+    risk: protected
+    source: builtin-protected
+    match:
+      exact: "%USERPROFILE%/.azure"
+
+  - id: builtin-protected/kube
+    description: Kubernetes kubeconfig and credentials
+    product: kubectl
+    category: credential
+    risk: protected
+    source: builtin-protected
+    match:
+      exact: "%USERPROFILE%/.kube"

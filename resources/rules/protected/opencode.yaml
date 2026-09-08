@@ -1,0 +1,12 @@
+# Built-in permanent protected paths — OpenCode config face
+# (SPEC §9 / §18, INV-002 / INV-007). The config directory holds auth.json,
+# credentials and user settings — never cleanable.
+rules:
+  - id: builtin-protected/opencode-config
+    description: OpenCode config directory (auth, credentials, user config)
+    product: OpenCode
+    category: credential
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%USERPROFILE%/.config/opencode/**"

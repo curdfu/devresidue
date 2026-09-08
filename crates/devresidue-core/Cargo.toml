@@ -1,0 +1,22 @@
+[package]
+name = "devresidue-core"
+description = "DevResidue platform-neutral domain model and safety contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+globset = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# serde_yaml_ng: maintained drop-in fork of the archived serde_yaml 0.9 —
+# identical API, no MSRV bump, used for rule-file (de)serialization.
+serde_yaml_ng = "0.9"
+thiserror = "2"
+
+[dev-dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"

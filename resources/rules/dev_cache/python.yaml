@@ -1,0 +1,52 @@
+# Python ecosystem cache rules (builtin detection).
+#
+# Path knowledge extracted from `tw93/Mole` Windows branch (MIT) — dev.ps1.
+# pip/uv caches already have dedicated providers; these rules classify the
+# remaining Python-family caches surfaced by the unknown provider.
+rules:
+  - id: builtin-detection/pyenv-cache
+    description: pyenv downloaded interpreter archives
+    product: pyenv
+    category: developer-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.pyenv/cache"
+
+  - id: builtin-detection/poetry-cache
+    description: Poetry package/wheel cache (re-downloaded on demand)
+    product: Poetry
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/pypoetry/Cache"
+
+  - id: builtin-detection/jupyter-runtime
+    description: "Jupyter runtime files — may hold live kernel state; review \
+      before cleanup (kernels must be idle)"
+    product: Jupyter
+    category: temporary
+    risk: review
+    source: builtin-detection
+    match:
+      exact: "%APPDATA%/jupyter/runtime"
+
+  - id: builtin-detection/pytest-cache-home
+    description: pytest last-failed/stepwise cache under the profile root
+    product: pytest
+    category: temporary
+    risk: regenerable-local
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.pytest_cache"
+
+  - id: builtin-detection/conda-packages
+    description: "Conda extracted package pool — shared by environments; \
+      removing forces re-extraction for every env that links against it"
+    product: Conda
+    category: package-cache
+    risk: review
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.conda/pkgs"

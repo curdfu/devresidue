@@ -1,0 +1,39 @@
+# Built-in permanent protected paths — Codex CLI auth/secret/config faces
+# (SPEC §9 / §18, INV-002 / INV-007). Protected-source rules always win and
+# can never be overridden (SPEC §14).
+rules:
+  - id: builtin-protected/codex-secrets
+    description: Codex CLI sandbox secrets and OAuth/mcp lock state
+    product: Codex CLI
+    category: credential
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%USERPROFILE%/.codex/.sandbox-secrets/**"
+
+  - id: builtin-protected/codex-mcp-locks
+    description: Codex CLI MCP OAuth locks
+    product: Codex CLI
+    category: configuration
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%USERPROFILE%/.codex/mcp-oauth-locks/**"
+
+  - id: builtin-protected/codex-rules-skills
+    description: Codex CLI rules and skills (user-authored instructions)
+    product: Codex CLI
+    category: configuration
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%USERPROFILE%/.codex/rules/**"
+
+  - id: builtin-protected/codex-thread-locks
+    description: Codex CLI thread writer locks and REPL state
+    product: Codex CLI
+    category: configuration
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%USERPROFILE%/.codex/thread-writer-locks/**"

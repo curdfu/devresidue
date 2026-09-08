@@ -1,0 +1,60 @@
+# Editor / IDE cache rules (builtin detection).
+#
+# Path knowledge extracted from `tw93/Mole` Windows branch (MIT) — dev.ps1.
+# Only fine-grained cache sub-directories (never `Code`/`JetBrains` roots —
+# settings, extensions and workspace state live there and stay untouched).
+# VS Code paths target the Default profile's cache set Mole validated.
+rules:
+  - id: builtin-detection/vscode-cache
+    description: VS Code Chromium/code caches under the Default profile
+    product: VS Code
+    category: ide
+    risk: regenerable-local
+    source: builtin-detection
+    match:
+      exact: "%APPDATA%/Code/Cache"
+
+  - id: builtin-detection/vscode-cached-data
+    description: VS Code cached bundle data (regenerated on start)
+    product: VS Code
+    category: ide
+    risk: regenerable-local
+    source: builtin-detection
+    match:
+      exact: "%APPDATA%/Code/CachedData"
+
+  - id: builtin-detection/vscode-gpu-cache
+    description: VS Code GPU shader cache
+    product: VS Code
+    category: ide
+    risk: safe
+    source: builtin-detection
+    match:
+      exact: "%APPDATA%/Code/GPUCache"
+
+  - id: builtin-detection/vscode-cpptools-cache
+    description: VS Code C/C++ extension intelliSense cache
+    product: vscode-cpptools
+    category: ide
+    risk: regenerable-local
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/Microsoft/vscode-cpptools"
+
+  - id: builtin-detection/zed-cache
+    description: Zed editor cache under LocalAppData
+    product: Zed
+    category: ide
+    risk: regenerable-local
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/Zed/cache"
+
+  - id: builtin-detection/sublime-text-cache
+    description: Sublime Text package index cache
+    product: Sublime Text
+    category: ide
+    risk: regenerable-local
+    source: builtin-detection
+    match:
+      exact: "%APPDATA%/Sublime Text/Cache"

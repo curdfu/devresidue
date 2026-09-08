@@ -1,0 +1,60 @@
+# JavaScript ecosystem cache rules (builtin detection).
+#
+# Path knowledge extracted from `tw93/Mole` Windows branch (MIT) — dev.ps1
+# cache locations. Rules only CLASSIFY; discovery comes from the dev-cache /
+# unknown providers (SPEC §10/§25). Every entry targets the fine-grained
+# cache sub-directory, never a whole tool home.
+rules:
+  - id: builtin-detection/pnpm-store
+    description: pnpm content-addressable package store (re-downloaded on next install)
+    product: pnpm
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/pnpm/store"
+
+  - id: builtin-detection/yarn-cache-local
+    description: Yarn classic package cache under LocalAppData
+    product: Yarn
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/Yarn/Cache"
+
+  - id: builtin-detection/yarn-cache-home
+    description: Yarn package cache under the user profile
+    product: Yarn
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.yarn/cache"
+
+  - id: builtin-detection/node-gyp-cache
+    description: node-gyp downloaded Node headers / build cache
+    product: node-gyp
+    category: developer-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/node-gyp/Cache"
+
+  - id: builtin-detection/electron-cache
+    description: Electron prebuilt binaries download cache
+    product: Electron
+    category: developer-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/electron/Cache"
+
+  - id: builtin-detection/typescript-cache
+    description: TypeScript compiler incremental cache (rebuilds on next compile)
+    product: TypeScript
+    category: developer-cache
+    risk: regenerable-local
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/TypeScript"

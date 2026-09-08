@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0",
+  "updatedAt": "2026-09-04T00:00:00.000Z",
+  "dependencies": [
+    {
+      "name": "kondo-lib",
+      "resolvedVersion": "0.9.0",
+      "repoUrl": "https://github.com/tbillington/kondo.git",
+      "ref": "v0.9",
+      "path": ".slim/clonedeps/repos/tbillington__kondo",
+      "packagePath": "kondo-lib",
+      "reason": "Runtime dependency source: project discovery, project type detection, build artifact identification. Pinned to the tag matching the crates.io version used in Cargo.toml."
+    },
+    {
+      "name": "Mole (windows branch)",
+      "resolvedVersion": "branch windows @ 4b9bb74036bea901e56cf23508455bf3087479b1",
+      "repoUrl": "https://github.com/tw93/Mole.git",
+      "ref": "windows",
+      "path": ".slim/clonedeps/repos/tw93__Mole__windows",
+      "packagePath": "",
+      "reason": "MIT-licensed reference for developer cache paths, tool-native cleanup commands, whitelist and process guard on Windows. Reference only, no runtime dependency."
+    },
+    {
+      "name": "Mole (main branch)",
+      "resolvedVersion": "branch main @ 867270e93c42378b57f9706406845c7fd5a1fe91",
+      "repoUrl": "https://github.com/tw93/Mole.git",
+      "ref": "main",
+      "path": ".slim/clonedeps/repos/tw93__Mole__main",
+      "packagePath": "",
+      "reason": "GPL-licensed. Design reference only for safety ideas (tool-reported path validation, home/root guard, symlink/reparse checks, TOCTOU, fail-closed). Do not copy implementation code."
+    }
+  ]
+}

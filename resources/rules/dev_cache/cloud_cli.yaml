@@ -1,0 +1,51 @@
+# Cloud CLI / infrastructure tool cache rules (builtin detection).
+#
+# Path knowledge extracted from `tw93/Mole` Windows branch (MIT) — dev.ps1.
+# NOTE: `.aws` / `.azure` / `.kube` ROOTS are protected by builtin-protected
+# rules (credentials live there); these rules classify only the cache/log
+# sub-directories that are safe to recycle.
+rules:
+  - id: builtin-detection/aws-cli-cache
+    description: AWS CLI bearer-token / API response cache (not credentials)
+    product: AWS CLI
+    category: developer-cache
+    risk: safe
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.aws/cli/cache"
+
+  - id: builtin-detection/azure-cli-logs
+    description: Azure CLI per-command log files
+    product: Azure CLI
+    category: log
+    risk: safe
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.azure/logs"
+
+  - id: builtin-detection/gcloud-logs
+    description: Google Cloud SDK log files
+    product: Google Cloud CLI
+    category: log
+    risk: safe
+    source: builtin-detection
+    match:
+      exact: "%APPDATA%/gcloud/logs"
+
+  - id: builtin-detection/kubernetes-client-cache
+    description: Kubernetes kubectl discovery/client cache
+    product: Kubernetes
+    category: developer-cache
+    risk: regenerable-local
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.kube/cache"
+
+  - id: builtin-detection/terraform-plugin-cache
+    description: Terraform provider plugin download cache
+    product: Terraform
+    category: developer-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%APPDATA%/terraform.d/plugin-cache"

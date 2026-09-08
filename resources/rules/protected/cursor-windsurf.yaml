@@ -1,0 +1,39 @@
+# Built-in permanent protected paths — Cursor / Windsurf MCP & settings faces
+# (SPEC §9 / §18, INV-002 / INV-007). Both editors share the VS Code family
+# layout under %APPDATA%.
+rules:
+  - id: builtin-protected/cursor-mcp-and-settings
+    description: Cursor MCP server config and user settings
+    product: Cursor
+    category: configuration
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%APPDATA%/Cursor/User/mcp.json"
+
+  - id: builtin-protected/cursor-settings-json
+    description: Cursor user settings
+    product: Cursor
+    category: configuration
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%APPDATA%/Cursor/User/settings.json"
+
+  - id: builtin-protected/windsurf-mcp-and-settings
+    description: Windsurf MCP server config and user settings
+    product: Windsurf
+    category: configuration
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%APPDATA%/Windsurf/User/mcp.json"
+
+  - id: builtin-protected/windsurf-settings-json
+    description: Windsurf user settings
+    product: Windsurf
+    category: configuration
+    risk: protected
+    source: builtin-protected
+    match:
+      glob: "%APPDATA%/Windsurf/User/settings.json"

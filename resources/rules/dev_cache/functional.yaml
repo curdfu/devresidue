@@ -1,0 +1,33 @@
+# Functional-programming toolchain cache rules (builtin detection).
+#
+# Path knowledge extracted from `tw93/Mole` Windows branch (MIT) — dev.ps1.
+# These toolchains carry GLOBAL installs / compiler trees inside their homes:
+# rules only ever match the cache/store sub-directories, never the root.
+rules:
+  - id: builtin-detection/hex-cache
+    description: Elixir Hex package download cache
+    product: Hex
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.hex/cache"
+
+  - id: builtin-detection/opam-download-cache
+    description: OCaml opam package download cache
+    product: opam
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.opam/download-cache"
+
+  - id: builtin-detection/cabal-packages-cache
+    description: "Haskell Cabal downloaded package tarballs (re-downloaded on \
+      demand; builds unaffected)"
+    product: Cabal
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.cabal/packages"

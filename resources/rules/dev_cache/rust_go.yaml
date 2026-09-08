@@ -1,0 +1,32 @@
+# Rust / Go / toolchain cache rules (builtin detection).
+#
+# Path knowledge extracted from `tw93/Mole` Windows branch (MIT) — dev.ps1.
+# The cargo registry cache (`.cargo/registry/cache`) has its own provider;
+# these classify the remaining toolchain caches.
+rules:
+  - id: builtin-detection/cargo-git-checkouts
+    description: Cargo git dependency checkouts (re-cloned on next build)
+    product: Cargo
+    category: developer-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.cargo/git/checkouts"
+
+  - id: builtin-detection/rustup-downloads
+    description: Rustup downloaded toolchain archives (re-downloadable)
+    product: Rustup
+    category: developer-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/.rustup/downloads"
+
+  - id: builtin-detection/go-module-cache
+    description: Go module download cache under the default GOPATH
+    product: Go
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%USERPROFILE%/go/pkg/mod/cache"

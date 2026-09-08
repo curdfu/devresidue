@@ -1,0 +1,23 @@
+# .NET / build-tool cache rules (builtin detection).
+#
+# Path knowledge extracted from `tw93/Mole` Windows branch (MIT) — dev.ps1.
+# The NuGet global packages folder has its own provider; these classify the
+# HTTP/plugin caches Mole treats as safely cleanable.
+rules:
+  - id: builtin-detection/nuget-http-cache
+    description: NuGet v3 HTTP response cache (re-fetched from feeds)
+    product: NuGet
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/NuGet/v3-cache"
+
+  - id: builtin-detection/nuget-plugins-cache
+    description: NuGet plugin download cache
+    product: NuGet
+    category: package-cache
+    risk: regenerable-download
+    source: builtin-detection
+    match:
+      exact: "%LOCALAPPDATA%/NuGet/plugins-cache"

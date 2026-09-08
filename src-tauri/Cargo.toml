@@ -1,0 +1,32 @@
+[package]
+name = "devresidue-app"
+description = "DevResidue Tauri v2 shell (Rust command layer over the Core providers/planner/engine)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["DevResidue Contributors"]
+
+# This crate is intentionally NOT a member of the root workspace (see the
+# `exclude` entry in the root Cargo.toml): the dependency direction is
+# src-tauri -> crates/*, never the other way around, and Core must never
+# compile against Tauri types.
+
+[[bin]]
+name = "devresidue-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+
+devresidue-core = { path = "../crates/devresidue-core" }
+devresidue-platform-windows = { path = "../crates/devresidue-platform-windows" }
+devresidue-providers = { path = "../crates/devresidue-providers" }
+
+[profile.release]
+lto = true
+codegen-units = 1
