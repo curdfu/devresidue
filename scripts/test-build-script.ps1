@@ -102,6 +102,24 @@ if ($null -eq $ps1) {
     $tauriTestArgs  = [regex]::new('''test'',\s*''--manifest-path'',\s*\$manifest,\s*''--locked'',\s*''--features'',\s*''custom-protocol''')
     Assert-True ($tauriBuildArgs.IsMatch($ps1)) 'Tauri release 构建显式传 --features custom-protocol'
     Assert-True ($tauriTestArgs.IsMatch($ps1))  'Tauri test 显式传 --features custom-protocol'
+
+    # --- Tauri release 构建心跳契约（仅用于 Tauri shell release build，不改命令/参数）---
+    # 心跳：终端 final link 长时间无输出时的可观测状态（非虚假百分比）。
+    Assert-True ($ps1 -match 'Invoke-NativeWithHeartbeat')       '存在专用 heartbeat helper'
+    Assert-True ($ps1 -match '\$HeartbeatSeconds\s*=\s*10')       '心跳默认间隔常量 10 秒'
+    Assert-True ($ps1 -match 'Elapsed')                            '含已耗时(elapsed)计时输出'
+    Assert-True ($ps1 -match "'cargo'")                           '检测 cargo 子进程'
+    Assert-True ($ps1 -match "'rustc'")                           '检测 rustc 子进程'
+    Assert-True (($ps1 -match "'link'") -and ($ps1 -match "'lld-link'")) '检测 link / lld-link 子进程'
+    # 必须明确心跳非百分比
+    Assert-True ($ps1 -match '进行中')                             '心跳状态字样“进行中”'
+    Assert-True ($ps1 -match '不是.*百分比|百分比.*不是|虚假|并非进度百分比') '明确非虚假百分比说明'
+    # Tauri release 调用经 heartbeat helper（保留原命令/参数/features）
+    $tauriHbCall = [regex]::new('Invoke-NativeWithHeartbeat[^\r\n]*\$cargo[^\r\n]*''build''[^\r\n]*''--manifest-path''[^\r\n]*\$manifest[^\r\n]*''--release''[^\r\n]*''--locked''[^\r\n]*''--features''[^\r\n]*''custom-protocol''')
+    Assert-True ($tauriHbCall.IsMatch($ps1)) 'Tauri release 构建经 heartbeat helper 且保留 --features custom-protocol'
+    Assert-True ($ps1 -match '(?m)^function Invoke-NativeWithHeartbeat') 'helper 为独立函数'
+    # 失败 exit code 传播：helper 抛错文本含退出码
+    Assert-True ($ps1 -match '退出码|exit code|ExitCode')          '失败时传播退出码'
 }
 
 Write-Host ''
@@ -160,6 +178,64 @@ Write-Host "   [exit] $code2"
 Assert-True ($code2 -ne 0) "b) -Action Unsupported 被参数验证拒绝（退出码非 0，实际 $code2）"
 if (-not $existedBefore) {
     Assert-True (-not (Test-Path -LiteralPath $DistPortable)) 'b) 校验失败未创建 dist-portable'
+}
+
+Write-Host ''
+Write-Host '================ 4) 动态 heartbeat helper 测试（真实调用，非破坏） ================'
+# 让真实 helper 运行一个短暂的睡眠子进程，验证：心跳输出确实出现、退出码 0；
+# 再运行一个非 0 退出码子进程，验证失败被传播。HeartbeatSeconds=1 以加速测试。
+$heartbeatScript = @'
+param([string]$BuildPs1, [string]$Mode, [string]$ShellPath)
+$ErrorActionPreference = 'Stop'
+. $BuildPs1   # dot-source：定义 RepoRoot、Write-* 辅助与 Invoke-NativeWithHeartbeat
+if ($Mode -eq 'ok') {
+    # 瞬时成功进程：验证 helper 正常返回、无心跳刷屏
+    $out = Invoke-NativeWithHeartbeat -FilePath $ShellPath -Arguments @('-NoProfile','-Command','exit 0') -WorkingDir $RepoRoot -Label '心跳测试-成功' -HeartbeatSeconds 1 2>&1 | Out-String
+    Write-Output "CAPTURED_OUTPUT_BEGIN"
+    Write-Output $out
+    Write-Output "CAPTURED_OUTPUT_END"
+}
+elseif ($Mode -eq 'slow') {
+    # 睡眠足够久，确保至少跨越一次心跳间隔（1 秒间隔 -> 睡 3 秒）
+    $out = Invoke-NativeWithHeartbeat -FilePath $ShellPath -Arguments @('-NoProfile','-Command','Start-Sleep -Seconds 3; exit 0') -WorkingDir $RepoRoot -Label '心跳测试-慢' -HeartbeatSeconds 1 2>&1 | Out-String
+    Write-Output "SLOW_OUTPUT_BEGIN"
+    Write-Output $out
+    Write-Output "SLOW_OUTPUT_END"
+}
+elseif ($Mode -eq 'fail') {
+    try {
+        Invoke-NativeWithHeartbeat -FilePath $ShellPath -Arguments @('-NoProfile','-Command','exit 7') -WorkingDir $RepoRoot -Label '心跳测试-失败' -HeartbeatSeconds 1 2>&1 | Out-String
+        Write-Output "NO_THROW"
+    } catch {
+        Write-Output ("THREW: " + $_.Exception.Message)
+    }
+}
+'@
+$tmpScript = Join-Path $env:TEMP ("dr-hb-test-" + [guid]::NewGuid().ToString('N') + ".ps1")
+[System.IO.File]::WriteAllText($tmpScript, $heartbeatScript, [System.Text.UTF8Encoding]::new($false))
+try {
+    # ok：成功路径，退出码 0（helper 正常返回，输出含 RUN>）
+    $okOut = & $pwshExe -NoProfile -File $tmpScript -BuildPs1 $BuildPs1 -Mode ok -ShellPath $pwshExe 2>&1 | Out-String
+    $hasRun = $okOut -match 'RUN>|进行中|等待'
+    Assert-True $hasRun '动态-成功进程：helper 正常运行（含 RUN>/心跳字样）'
+    # 失败：验证异常被抛出并含退出码
+    $failOut = & $pwshExe -NoProfile -File $tmpScript -BuildPs1 $BuildPs1 -Mode fail -ShellPath $pwshExe 2>&1 | Out-String
+    $threw = $failOut -match 'THREW:'
+    $hasRc  = $failOut -match '7'
+    Assert-True ($threw -and $hasRc) '动态-失败进程：非 0 退出码被传播（抛出含 7）'
+
+    # slow：验证至少出现一次 [进行中] 心跳行
+    $slowOut = & $pwshExe -NoProfile -File $tmpScript -BuildPs1 $BuildPs1 -Mode slow -ShellPath $pwshExe 2>&1 | Out-String
+    $hbLine = ($slowOut -split "`r?`n") | Where-Object { $_ -match '进行中' } | Select-Object -First 1
+    if ($hbLine) {
+        Write-Host "   [heartbeat sample] $hbLine"
+        Assert-True $true '动态-慢进程：心跳行出现（真实 helper 执行）'
+    } else {
+        Assert-True $false '动态-慢进程：心跳行出现（真实 helper 执行）'
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $tmpScript) { Remove-Item -LiteralPath $tmpScript -Force }
 }
 
 Write-Host ''

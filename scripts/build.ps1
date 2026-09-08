@@ -128,6 +128,110 @@ function Invoke-Native {
     }
 }
 
+# Tauri shell 的 release 构建（final link 阶段可能长时间无输出，终端看似“卡住”）。
+# 心跳间隔默认 10 秒；测试可用 -HeartbeatSeconds 覆盖以加速。
+$HeartbeatSeconds = 10
+
+function Invoke-NativeWithHeartbeat {
+    <#
+      .SYNOPSIS
+        运行外部命令并转发其原始 stdout/stderr；在命令尚未退出时按固定间隔输出
+        中文心跳状态行，用于 Tauri final link 这类长时间静默阶段的“可观测”提示。
+
+      .DESCRIPTION
+        仅用于 Tauri shell release 构建（不改动该 cargo 命令/参数/工作目录/退出码语义）。
+        Cargo 原始 stdout/stderr 由子进程继承父控制台实时转发给用户；
+        心跳每 $HeartbeatSeconds 秒输出一次：阶段/Label、已耗时、以及该阶段相关或
+        系统可检测到的活跃子进程摘要（cargo/rustc/link/lld-link 等，含 CPU 秒与内存）。
+        若无匹配子进程则如实提示“子进程仍在等待/链接器状态暂不可见”。
+        注意：这是“仍在运行/等待”的状态提示，不是虚假的进度百分比。
+        命令失败会抛出含退出码的错误；成功不遗留临时文件或后台进程。
+
+      .PARAMETER HeartbeatSeconds
+        心跳间隔秒数（默认取脚本级 $HeartbeatSeconds = 10）。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [string]$WorkingDir = $RepoRoot,
+        [string]$Label = '',
+        [int]$HeartbeatSeconds = $script:HeartbeatSeconds
+    )
+    if (-not $FilePath) { throw "命令不可用（找不到可执行文件）：$Label" }
+    if ($HeartbeatSeconds -lt 1) { $HeartbeatSeconds = 1 }
+    $disp = $Label
+    if (-not $disp) { $disp = "$FilePath $($Arguments -join ' ')" }
+    Write-Host ''
+    Write-Host "RUN> $disp"
+    Write-Host "[心跳] 命令尚未退出时将每 ${HeartbeatSeconds} 秒输出状态行（非进度百分比）"
+
+    # Windows 命令行参数引用：仅当参数含空格/引号时才加引号，内部引号加倍。
+    # （内联生成，避免嵌套函数作用域/数组绑定问题。）
+    $argStr = (($Arguments | ForEach-Object {
+        if ($_ -match '[\s"]') { '"{0}"' -f ($_ -replace '"', '""') } else { $_ }
+    }) -join ' ')
+
+    # 用 .NET ProcessStartInfo：WorkingDirectory 生效、输出继承父控制台（实时转发
+    # 原始 stdout/stderr，符合“不改命令/参数/工作目录语义”），PS 5.1 亦兼容。
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.WorkingDirectory = $WorkingDir
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    if ($argStr) { $psi.Arguments = $argStr }
+
+    $proc = $null
+    try {
+        $proc = [System.Diagnostics.Process]::Start($psi)
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $lastBeat = [Environment]::TickCount64
+
+        # 活跃子进程检测的关键词（与本阶段相关或系统可检测到）
+        $probeNames = @('cargo', 'rustc', 'link', 'lld-link', 'link.exe', 'rust-lld')
+
+        # 用 WaitForExit(ms) 轮询：进程退出即返回 true 并缓存退出码（比仅靠
+        # HasExited 更可靠，避免继承控制台场景下退出状态不刷新的问题）。
+        while (-not $proc.WaitForExit(500)) {
+            $now = [Environment]::TickCount64
+            if (($now - $lastBeat) -ge ($HeartbeatSeconds * 1000)) {
+                $lastBeat = $now
+                $elapsed = [math]::Round($sw.Elapsed.TotalSeconds, 0)
+                $childInfo = @()
+                foreach ($n in $probeNames) {
+                    try {
+                        Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {
+                            $cpu = 0.0
+                            try { $cpu = [math]::Round($_.CPU, 1) } catch { $cpu = 0.0 }
+                            $mem = 0
+                            try { $mem = [math]::Round($_.WorkingSet64 / 1MB, 0) } catch { $mem = 0 }
+                            $childInfo += ('{0} CPU={1}s Mem={2}MB' -f $_.ProcessName, $cpu, $mem)
+                        }
+                    } catch { }
+                }
+                if ($childInfo.Count -gt 0) {
+                    $summary = ($childInfo | Select-Object -Unique) -join '；'
+                    Write-Host ("[进行中] {0}：已耗时 {1}s，活跃子进程：{2}" -f $disp, $elapsed, $summary)
+                }
+                else {
+                    Write-Host ("[进行中] {0}：已耗时 {1}s，子进程仍在等待 / 链接器状态暂不可见（非进度百分比）" -f $disp, $elapsed)
+                }
+            }
+        }
+        $sw.Stop()
+
+        $rc = $proc.ExitCode
+        Write-Host ("[心跳] 命令结束：{0}，退出码 {1}，耗时 {2}s" -f $disp, $rc, [math]::Round($sw.Elapsed.TotalSeconds, 0))
+        if ($rc -ne 0) {
+            Write-Err "命令失败（退出码 $rc）：$disp"
+            throw "命令失败（退出码 $rc）：$disp"
+        }
+    }
+    finally {
+        if ($proc) { $proc.Dispose() }
+    }
+}
+
 function Get-PackageVersion {
     # 优先 [package] version；根 workspace manifest 无 [package] 时回退 [workspace.package]
     $cargo = Join-Path $RepoRoot 'Cargo.toml'
@@ -303,7 +407,8 @@ function Invoke-Build {
         $manifest = Join-Path $RepoRoot 'src-tauri\Cargo.toml'
         if (-not (Test-Path -LiteralPath $manifest)) { throw "找不到 src-tauri 清单：$manifest" }
         Write-Step 'Tauri shell release 构建：cargo build --manifest-path src-tauri/Cargo.toml --release --locked --features custom-protocol'
-        Invoke-Native $cargo @('build', '--manifest-path', $manifest, '--release', '--locked', '--features', 'custom-protocol') $RepoRoot 'cargo build --manifest-path src-tauri/Cargo.toml --release --locked --features custom-protocol'
+        # Tauri final link 可能长时间静默，用带心跳的 helper 保持可观测（命令/参数/工作目录不变）
+        Invoke-NativeWithHeartbeat -FilePath $cargo -Arguments @('build', '--manifest-path', $manifest, '--release', '--locked', '--features', 'custom-protocol') -WorkingDir $RepoRoot -Label 'cargo build --manifest-path src-tauri/Cargo.toml --release --locked --features custom-protocol'
     }
 
     if ($SkipTests) {
@@ -422,26 +527,30 @@ function Invoke-Portable {
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
-try {
-    switch ($Action) {
-        'Check' {
-            if (-not (Invoke-EnvironmentCheck)) { throw '环境检查未通过（存在缺失工具）。' }
+# 仅当作为脚本执行（非被 dot-source 导入）时运行主流程；被 . $BuildPs1 导入时
+# 只定义函数/常量，供测试等场景复用 helper，而不会触发构建。
+if ($MyInvocation.InvocationName -ne '.') {
+    try {
+        switch ($Action) {
+            'Check' {
+                if (-not (Invoke-EnvironmentCheck)) { throw '环境检查未通过（存在缺失工具）。' }
+            }
+            'Build' {
+                Invoke-Build
+            }
+            'Portable' {
+                Invoke-Build
+                Invoke-Portable
+            }
         }
-        'Build' {
-            Invoke-Build
-        }
-        'Portable' {
-            Invoke-Build
-            Invoke-Portable
-        }
+        Write-Ok "流程完成（Action=$Action），退出码 0"
+        exit 0
     }
-    Write-Ok "流程完成（Action=$Action），退出码 0"
-    exit 0
-}
-catch {
-    Write-Err "错误：$($_.Exception.Message)"
-    if ($_.ScriptStackTrace) { Write-Host $_.ScriptStackTrace }
-    Write-Host ''
-    Write-Err "流程失败（Action=$Action），退出码 1"
-    exit 1
+    catch {
+        Write-Err "错误：$($_.Exception.Message)"
+        if ($_.ScriptStackTrace) { Write-Host $_.ScriptStackTrace }
+        Write-Host ''
+        Write-Err "流程失败（Action=$Action），退出码 1"
+        exit 1
+    }
 }
