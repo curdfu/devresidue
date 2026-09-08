@@ -25,6 +25,7 @@ function Assert-True {
 $RepoRoot     = Split-Path -Parent $PSScriptRoot
 $BuildPs1     = Join-Path $PSScriptRoot 'build.ps1'
 $BuildBat     = Join-Path $RepoRoot 'build.bat'
+$TauriManifest = Join-Path $RepoRoot 'src-tauri\Cargo.toml'
 $DistPortable = Join-Path $RepoRoot 'dist-portable'
 
 # --- 编码安全的文本读取 ---
@@ -51,6 +52,7 @@ function Get-GbkText {
 
 $ps1 = Get-Utf8Text $BuildPs1   # build.ps1（UTF-8 BOM）
 $bat = Get-GbkText  $BuildBat   # build.bat（GBK/cp936，与 devresidue-toolbox.bat 一致）
+$tm  = Get-Utf8Text $TauriManifest  # src-tauri/Cargo.toml（UTF-8 无 BOM）
 
 Write-Host ''
 Write-Host '================ 1) build.ps1 静态约定 ================'
@@ -85,6 +87,32 @@ if ($null -eq $ps1) {
                           ($destLowers -contains 'devresidue.exe') -and
                           ($destLowers -contains 'devresidue-cli.exe')
     Assert-True $targetsAreDistinct '打包 .exe 目标恰好两个且 lower 名互异，无大小写覆盖'
+
+    # --- custom-protocol 契约：Tauri 构建/测试必须显式启用 feature ---
+    # 纯 cargo release 的 GUI 必须启用 tauri/custom-protocol（嵌入 dist 前端资源，
+    # 经 tauri://localhost 提供），否则绿色包回退 devUrl http://localhost:1420
+    # 导致首屏“页面无法访问”。构建与测试调用均需显式传 --features custom-protocol，
+    # 防止 src-tauri default features 被改动后绿色包失效。
+    # （标签文本为 "--features custom-protocol"；参数数组为 '--features', 'custom-protocol'，
+    #  二者形态不同，可分别精确断言。）
+    Assert-True ($ps1 -match "--features custom-protocol") 'build.ps1 显示文本含 --features custom-protocol'
+    # 注：正则须用单引号字符串字面量（内部单引号翻倍），使 $manifest 保持字面文本，
+    # 避免双引号内 PowerShell 将 $manifest 当变量插值为空导致误判。
+    $tauriBuildArgs = [regex]::new('''build'',\s*''--manifest-path'',\s*\$manifest,\s*''--release'',\s*''--locked'',\s*''--features'',\s*''custom-protocol''')
+    $tauriTestArgs  = [regex]::new('''test'',\s*''--manifest-path'',\s*\$manifest,\s*''--locked'',\s*''--features'',\s*''custom-protocol''')
+    Assert-True ($tauriBuildArgs.IsMatch($ps1)) 'Tauri release 构建显式传 --features custom-protocol'
+    Assert-True ($tauriTestArgs.IsMatch($ps1))  'Tauri test 显式传 --features custom-protocol'
+}
+
+Write-Host ''
+Write-Host '================ 1b) src-tauri/Cargo.toml custom-protocol 契约 ================'
+if ($null -eq $tm) {
+    Assert-True $false 'src-tauri/Cargo.toml 存在且可读'
+} else {
+    Assert-True $true 'src-tauri/Cargo.toml 存在且可读'
+    Assert-True ([regex]::IsMatch($tm, '(?m)^\[features\]\s*$')) '含 [features] 段'
+    Assert-True ([regex]::IsMatch($tm, '(?m)^default\s*=\s*\["custom-protocol"\]\s*$')) 'default = ["custom-protocol"]'
+    Assert-True ([regex]::IsMatch($tm, '(?m)^custom-protocol\s*=\s*\["tauri/custom-protocol"\]\s*$')) 'custom-protocol = ["tauri/custom-protocol"]'
 }
 
 Write-Host ''

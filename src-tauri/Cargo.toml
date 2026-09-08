@@ -27,6 +27,15 @@ devresidue-core = { path = "../crates/devresidue-core" }
 devresidue-platform-windows = { path = "../crates/devresidue-platform-windows" }
 devresidue-providers = { path = "../crates/devresidue-providers" }
 
+# custom-protocol: 纯 cargo release 构建的 GUI 需启用 tauri/custom-protocol，将
+# tauri.conf.json 的 frontendDist(../dist) 嵌入并在 tauri://localhost 提供前端资源。
+# 若不启用，GUI 会回退到 devUrl http://localhost:1420，绿色部署包打开即“页面无法访问”。
+# 此 feature 必须默认开启；scripts/build.ps1 的 Tauri release 构建/测试亦显式传
+# --features custom-protocol，防止 default 被改动后绿色包失效。
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [profile.release]
 lto = true
 codegen-units = 1

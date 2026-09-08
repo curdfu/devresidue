@@ -302,8 +302,8 @@ function Invoke-Build {
     if ($frontReady) {
         $manifest = Join-Path $RepoRoot 'src-tauri\Cargo.toml'
         if (-not (Test-Path -LiteralPath $manifest)) { throw "找不到 src-tauri 清单：$manifest" }
-        Write-Step 'Tauri shell release 构建：cargo build --manifest-path src-tauri/Cargo.toml --release --locked'
-        Invoke-Native $cargo @('build', '--manifest-path', $manifest, '--release', '--locked') $RepoRoot 'cargo build --manifest-path src-tauri/Cargo.toml --release --locked'
+        Write-Step 'Tauri shell release 构建：cargo build --manifest-path src-tauri/Cargo.toml --release --locked --features custom-protocol'
+        Invoke-Native $cargo @('build', '--manifest-path', $manifest, '--release', '--locked', '--features', 'custom-protocol') $RepoRoot 'cargo build --manifest-path src-tauri/Cargo.toml --release --locked --features custom-protocol'
     }
 
     if ($SkipTests) {
@@ -315,8 +315,8 @@ function Invoke-Build {
 
         $manifest = Join-Path $RepoRoot 'src-tauri\Cargo.toml'
         if (Test-Path -LiteralPath $manifest) {
-            Write-Step 'Tauri shell 测试：cargo test --manifest-path src-tauri/Cargo.toml --locked'
-            Invoke-Native $cargo @('test', '--manifest-path', $manifest, '--locked') $RepoRoot 'cargo test --manifest-path src-tauri/Cargo.toml --locked'
+            Write-Step 'Tauri shell 测试：cargo test --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol'
+            Invoke-Native $cargo @('test', '--manifest-path', $manifest, '--locked', '--features', 'custom-protocol') $RepoRoot 'cargo test --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol'
         }
         else {
             Write-Warn "未找到 $manifest，跳过 src-tauri 测试"
