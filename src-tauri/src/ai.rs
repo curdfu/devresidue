@@ -8,15 +8,17 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use devresidue_ai::{
     AiAdvisorService, AiCancellationToken, AiConfirmationConfig, AiConfirmationSelection,
     AiProfileInput, AiProfileStore, AiReviewBatch, AiServiceError, AiServiceErrorKind,
     OpenAiCompatibleTransport, StoredProfiles,
 };
-use devresidue_core::ai::{AiProfile, AiProfileId, StructuredOutputMode};
+use devresidue_core::ai::{AiApiProtocol, AiProfile, AiProfileId, StructuredOutputMode};
 use devresidue_core::{ResidueCategory, RiskLevel, ScanItem, ScanItemId};
 use devresidue_platform_windows::env_key::WindowsUserEnvKeyStore;
 use devresidue_platform_windows::profile_file::WindowsAiProfileFilePort;
@@ -25,13 +27,18 @@ use devresidue_providers::scan_store::{self, ScanMode, ScanSnapshot};
 use tauri::State;
 
 use crate::contract::{
-    AiConfirmResultDto, AiPreparedBatchDto, AiPreparedEntryDto, AiProfileDto, AiProfileStateDto,
-    AiSuggestionDto, CommandError, ErrorCode, RiskLevelArg, StructuredOutputModeArg,
+    AiApiProtocolArg, AiConfirmResultDto, AiPreparedBatchDto, AiPreparedEntryDto, AiProfileDto,
+    AiProfileStateDto, AiSuggestionDto, CommandError, ErrorCode, RiskLevelArg,
+    StructuredOutputModeArg,
 };
 use crate::state::{AppModel, AppState};
 use crate::support;
 
 const MAX_REVIEW_BATCHES: usize = 4;
+const AI_DIAGNOSTICS_ENV: &str = "DEVRESIDUE_AI_DIAGNOSTICS";
+const AI_DIAGNOSTICS_FILE: &str = "remote-ai-diagnostics.log";
+const AI_DIAGNOSTICS_PREFIX: &str = "[AI-DIAG-9F4B]";
+const MAX_AI_DIAGNOSTIC_LOG_BYTES: usize = 32 * 1024;
 
 /// Lists all non-secret profile metadata and the independent remote-AI master
 /// switch. The API Key and generated environment-variable name are absent.
@@ -52,6 +59,7 @@ pub fn ai_upsert_profile(
     name: String,
     base_url: String,
     model: String,
+    api_protocol: AiApiProtocolArg,
     structured_output: StructuredOutputModeArg,
     timeout_secs: u64,
     enabled: bool,
@@ -63,6 +71,7 @@ pub fn ai_upsert_profile(
         name,
         base_url,
         model,
+        api_protocol: ai_api_protocol(api_protocol),
         structured_output_mode: structured_output_mode(structured_output),
         timeout_secs,
         enabled,
@@ -297,6 +306,7 @@ fn analyze_started_batch(
     let suggestions = match result {
         Ok(suggestions) => suggestions,
         Err(error) => {
+            record_ai_diagnostic(data_dir, &error);
             if error.kind() == AiServiceErrorKind::StaleGeneration {
                 model.lock().unwrap().ai.remove_batch(batch_id);
             }
@@ -582,6 +592,8 @@ fn profile_dto(profile: &AiProfile, is_active: bool) -> AiProfileDto {
         name: profile.name().to_string(),
         base_url: profile.base_url().to_string(),
         model: profile.model().to_string(),
+        api_protocol: ai_api_protocol_arg(profile.api_protocol()),
+        structured_output: structured_output_mode_arg(profile.structured_output_mode()),
         enabled: profile.enabled(),
         is_active,
     }
@@ -800,6 +812,28 @@ const fn structured_output_mode(mode: StructuredOutputModeArg) -> StructuredOutp
     }
 }
 
+const fn ai_api_protocol(protocol: AiApiProtocolArg) -> AiApiProtocol {
+    match protocol {
+        AiApiProtocolArg::OpenAiResponses => AiApiProtocol::OpenAiResponses,
+        AiApiProtocolArg::OpenAiCompatible => AiApiProtocol::OpenAiCompatible,
+    }
+}
+
+const fn ai_api_protocol_arg(protocol: AiApiProtocol) -> AiApiProtocolArg {
+    match protocol {
+        AiApiProtocol::OpenAiResponses => AiApiProtocolArg::OpenAiResponses,
+        AiApiProtocol::OpenAiCompatible => AiApiProtocolArg::OpenAiCompatible,
+    }
+}
+
+const fn structured_output_mode_arg(mode: StructuredOutputMode) -> StructuredOutputModeArg {
+    match mode {
+        StructuredOutputMode::Auto => StructuredOutputModeArg::Auto,
+        StructuredOutputMode::JsonSchema => StructuredOutputModeArg::JsonSchema,
+        StructuredOutputMode::JsonObject => StructuredOutputModeArg::JsonObject,
+    }
+}
+
 fn parse_profile_id(value: &str) -> Result<AiProfileId, CommandError> {
     AiProfileId::parse(value).map_err(|_| {
         CommandError::new(
@@ -864,7 +898,7 @@ fn ai_error(error: AiServiceError) -> CommandError {
         ),
         AiServiceErrorKind::InvalidResponse => CommandError::new(
             ErrorCode::AiRequestFailed,
-            "联网 AI 返回内容不符合本地安全校验；请检查模型是否支持 Chat Completions 与 JSON 输出。未创建清理计划或删除数据",
+            "联网 AI 返回内容不符合本地安全校验；请检查所选接口模式与模型是否支持 JSON 输出。未创建清理计划或删除数据",
         ),
         AiServiceErrorKind::RequestFailed => CommandError::new(
             ErrorCode::AiRequestFailed,
@@ -919,14 +953,64 @@ fn bounded_display(value: &str, max_chars: usize) -> String {
         .collect()
 }
 
+/// Writes a bounded local diagnostic line only when the user explicitly
+/// enables it. It intentionally omits endpoint, Key, paths, input metadata
+/// and model response text.
+fn record_ai_diagnostic(data_dir: &Path, error: &AiServiceError) {
+    let enabled = matches!(
+        std::env::var(AI_DIAGNOSTICS_ENV).as_deref(),
+        Ok("1" | "true" | "TRUE")
+    );
+    if !enabled {
+        return;
+    }
+
+    let path = data_dir.join(AI_DIAGNOSTICS_FILE);
+    let _ = fs::create_dir_all(data_dir);
+    let mut content = fs::read_to_string(&path).unwrap_or_default();
+    content.push_str(&ai_diagnostic_line(
+        error.kind(),
+        error.diagnostic_stage(),
+        error.status(),
+    ));
+    if content.len() > MAX_AI_DIAGNOSTIC_LOG_BYTES {
+        let keep_from = content.len() - MAX_AI_DIAGNOSTIC_LOG_BYTES;
+        let tail = content.get(keep_from..).unwrap_or_default();
+        content = tail
+            .split_once('\n')
+            .map_or_else(String::new, |(_, remainder)| remainder.to_string());
+    }
+    let _ = fs::write(path, content);
+}
+
+fn ai_diagnostic_line(
+    kind: AiServiceErrorKind,
+    stage: devresidue_ai::AiDiagnosticStage,
+    status: Option<u16>,
+) -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .unwrap_or_default();
+    let status = status
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    format!(
+        "{AI_DIAGNOSTICS_PREFIX} ts={timestamp} event=analysis-failed kind={:?} stage={} http_status={status}\n",
+        kind,
+        stage.as_str(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_display, core_risk, final_risk_options, profile_error, run_ai_blocking,
-        ActiveAiRequest, AiSessionState,
+        ai_diagnostic_line, bounded_display, core_risk, final_risk_options, profile_error,
+        run_ai_blocking, ActiveAiRequest, AiSessionState, AI_DIAGNOSTICS_PREFIX,
     };
     use crate::contract::{ErrorCode, RiskLevelArg};
-    use devresidue_ai::AiCancellationToken;
+    use devresidue_ai::{AiCancellationToken, AiDiagnosticStage, AiServiceErrorKind};
     use devresidue_core::RiskLevel;
 
     #[test]
@@ -942,6 +1026,23 @@ mod tests {
             ]
         );
         assert_eq!(core_risk(RiskLevelArg::Protected), RiskLevel::Protected);
+    }
+
+    #[test]
+    fn ai_diagnostic_line_contains_only_fixed_local_fields() {
+        let line = ai_diagnostic_line(
+            AiServiceErrorKind::InvalidResponse,
+            AiDiagnosticStage::LocalResponseValidation,
+            Some(200),
+        );
+
+        assert!(line.starts_with(AI_DIAGNOSTICS_PREFIX));
+        assert!(line.contains("kind=InvalidResponse"));
+        assert!(line.contains("stage=local-response-validation"));
+        assert!(line.contains("http_status=200"));
+        for forbidden in ["sk-test-key", "C:\\\\private", "model response", "https://"] {
+            assert!(!line.contains(forbidden));
+        }
     }
 
     #[test]

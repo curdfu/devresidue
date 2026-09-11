@@ -383,6 +383,26 @@ pub enum StructuredOutputMode {
     JsonObject,
 }
 
+/// Remote API envelope used for one AI profile.
+///
+/// This controls only the request/response protocol. It never weakens the
+/// metadata allowlist, local response validation, or confirmation gates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AiApiProtocol {
+    /// OpenAI's `POST /responses` API.
+    #[serde(rename = "openai-responses")]
+    OpenAiResponses,
+    /// The widely supported `POST /chat/completions` compatibility API.
+    #[serde(rename = "openai-compatible")]
+    OpenAiCompatible,
+}
+
+impl Default for AiApiProtocol {
+    fn default() -> Self {
+        Self::OpenAiCompatible
+    }
+}
+
 // ---- pure data DTOs ---------------------------------------------------------
 
 /// Non-sensitive AI profile configuration (the API key value never lives in a
@@ -408,6 +428,7 @@ pub enum StructuredOutputMode {
 ///     base_url: String::from("https://example.invalid/v1"),
 ///     model: String::from("m"),
 ///     api_key_env: derived_api_key_env(&id_b),
+///     api_protocol: AiApiProtocol::OpenAiCompatible,
 ///     structured_output_mode: StructuredOutputMode::Auto,
 ///     timeout_secs: 120,
 ///     enabled: true,
@@ -420,6 +441,7 @@ pub struct AiProfile {
     base_url: String,
     model: String,
     api_key_env: AiKeyEnvName,
+    api_protocol: AiApiProtocol,
     structured_output_mode: StructuredOutputMode,
     timeout_secs: u64,
     enabled: bool,
@@ -439,6 +461,30 @@ impl AiProfile {
         timeout_secs: u64,
         enabled: bool,
     ) -> Self {
+        Self::with_api_protocol(
+            id,
+            name,
+            base_url,
+            model,
+            AiApiProtocol::OpenAiCompatible,
+            structured_output_mode,
+            timeout_secs,
+            enabled,
+        )
+    }
+
+    /// Constructs a profile with an explicit request/response protocol.
+    #[must_use]
+    pub fn with_api_protocol(
+        id: AiProfileId,
+        name: String,
+        base_url: String,
+        model: String,
+        api_protocol: AiApiProtocol,
+        structured_output_mode: StructuredOutputMode,
+        timeout_secs: u64,
+        enabled: bool,
+    ) -> Self {
         let api_key_env = derived_api_key_env(&id);
         Self {
             id,
@@ -446,6 +492,7 @@ impl AiProfile {
             base_url,
             model,
             api_key_env,
+            api_protocol,
             structured_output_mode,
             timeout_secs,
             enabled,
@@ -483,6 +530,12 @@ impl AiProfile {
         &self.api_key_env
     }
 
+    /// Request/response API protocol selected for this profile.
+    #[must_use]
+    pub const fn api_protocol(&self) -> AiApiProtocol {
+        self.api_protocol
+    }
+
     /// Preferred structured-output mode.
     #[must_use]
     pub const fn structured_output_mode(&self) -> StructuredOutputMode {
@@ -507,12 +560,13 @@ impl Serialize for AiProfile {
         // Serialise the name derived from this profile's own id, never a
         // possibly-mutated field value: output always matches the id.
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("AiProfile", 8)?;
+        let mut state = serializer.serialize_struct("AiProfile", 9)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("name", &self.name)?;
         state.serialize_field("base_url", &self.base_url)?;
         state.serialize_field("model", &self.model)?;
         state.serialize_field("api_key_env", &derived_api_key_env(&self.id))?;
+        state.serialize_field("api_protocol", &self.api_protocol)?;
         state.serialize_field("structured_output_mode", &self.structured_output_mode)?;
         state.serialize_field("timeout_secs", &self.timeout_secs)?;
         state.serialize_field("enabled", &self.enabled)?;
@@ -531,6 +585,8 @@ struct AiProfileRaw {
     base_url: String,
     model: String,
     api_key_env: String,
+    #[serde(default)]
+    api_protocol: AiApiProtocol,
     structured_output_mode: StructuredOutputMode,
     timeout_secs: u64,
     enabled: bool,
@@ -549,11 +605,12 @@ impl<'de> Deserialize<'de> for AiProfile {
                 expected.as_str()
             )));
         }
-        Ok(AiProfile::new(
+        Ok(AiProfile::with_api_protocol(
             raw.id,
             raw.name,
             raw.base_url,
             raw.model,
+            raw.api_protocol,
             raw.structured_output_mode,
             raw.timeout_secs,
             raw.enabled,

@@ -44,8 +44,9 @@ use serde::Deserialize;
 
 #[cfg(test)]
 use crate::contract::{
-    AiConfirmResultDto, AiPreparedBatchDto, AiPreparedEntryDto, AiProfileDto, AiProfileStateDto,
-    AiSuggestionDto, ConfirmPolicyArg, DispositionArg, RiskLevelArg, ScanScope,
+    AiApiProtocolArg, AiConfirmResultDto, AiPreparedBatchDto, AiPreparedEntryDto, AiProfileDto,
+    AiProfileStateDto, AiSuggestionDto, ConfirmPolicyArg, DispositionArg, RiskLevelArg, ScanScope,
+    StructuredOutputModeArg,
 };
 
 /// Every registered command, in the same order as `main.rs`'s
@@ -310,12 +311,34 @@ mod tests {
     }
 
     #[test]
+    fn ai_api_protocol_wire_values_match_the_frontend_contract() {
+        assert_eq!(
+            serde_json::to_string(&AiApiProtocolArg::OpenAiResponses).unwrap(),
+            "\"openai-responses\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AiApiProtocolArg::OpenAiCompatible).unwrap(),
+            "\"openai-compatible\""
+        );
+        assert_eq!(
+            serde_json::from_str::<AiApiProtocolArg>("\"openai-responses\"").unwrap(),
+            AiApiProtocolArg::OpenAiResponses
+        );
+        assert_eq!(
+            serde_json::from_str::<AiApiProtocolArg>("\"openai-compatible\"").unwrap(),
+            AiApiProtocolArg::OpenAiCompatible
+        );
+    }
+
+    #[test]
     fn ai_profile_dto_has_no_api_key_or_environment_name_field() {
         let dto = AiProfileDto {
             id: "3fa85f64-5717-4562-b3fc-2c963f66afa6".into(),
             name: "local test".into(),
             base_url: "https://example.invalid/v1".into(),
             model: "test-model".into(),
+            api_protocol: AiApiProtocolArg::OpenAiCompatible,
+            structured_output: StructuredOutputModeArg::Auto,
             enabled: true,
             is_active: true,
         };
@@ -328,7 +351,16 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            vec!["baseUrl", "enabled", "id", "isActive", "model", "name"]
+            vec![
+                "apiProtocol",
+                "baseUrl",
+                "enabled",
+                "id",
+                "isActive",
+                "model",
+                "name",
+                "structuredOutput",
+            ]
         );
         assert!(value.get("apiKey").is_none());
         assert!(value.get("apiKeyEnv").is_none());
@@ -418,12 +450,23 @@ mod tests {
             name: "local test".into(),
             base_url: "https://example.invalid/v1".into(),
             model: "test-model".into(),
+            api_protocol: AiApiProtocolArg::OpenAiCompatible,
+            structured_output: StructuredOutputModeArg::Auto,
             enabled: true,
             is_active: true,
         };
         assert_keys(
             &profile,
-            &["id", "name", "baseUrl", "model", "enabled", "isActive"],
+            &[
+                "id",
+                "name",
+                "baseUrl",
+                "model",
+                "apiProtocol",
+                "structuredOutput",
+                "enabled",
+                "isActive",
+            ],
         );
         let profiles = AiProfileStateDto {
             master_enabled: true,

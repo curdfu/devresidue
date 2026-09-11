@@ -13,13 +13,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use devresidue_core::ai::{AiProfile, AiSuggestion, PreparedBatch};
+use devresidue_core::ai::{AiApiProtocol, AiProfile, AiSuggestion, PreparedBatch};
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::ResponseValidator;
+use crate::{ResponseValidationError, ResponseValidator};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RETRIES: usize = 2;
@@ -72,6 +72,55 @@ pub enum AiServiceErrorKind {
     RequestFailed,
 }
 
+/// A fixed, non-sensitive analysis failure stage for opt-in local diagnostics.
+///
+/// This is deliberately an enum rather than a server-provided string: it
+/// cannot contain response text, endpoint URLs, local paths, tokens or keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiDiagnosticStage {
+    NotApplicable,
+    RequestTransport,
+    RequestHttpStatus,
+    RequestTimeout,
+    RequestConnection,
+    RequestDeadlineExceeded,
+    ChatEnvelopeJson,
+    ChatMessageContent,
+    ResponsesEnvelopeJson,
+    ResponsesMessageContent,
+    LocalResponseValidation,
+    LocalResponseSchema,
+    LocalResponseCoverage,
+    LocalResponseUnknownToken,
+    LocalResponseDuplicateToken,
+    LocalResponseConfidence,
+}
+
+impl AiDiagnosticStage {
+    /// Stable log-safe text for an opt-in diagnostic record.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotApplicable => "not-applicable",
+            Self::RequestTransport => "request-transport",
+            Self::RequestHttpStatus => "request-http-status",
+            Self::RequestTimeout => "request-timeout",
+            Self::RequestConnection => "request-connection",
+            Self::RequestDeadlineExceeded => "request-deadline-exceeded",
+            Self::ChatEnvelopeJson => "chat-envelope-json",
+            Self::ChatMessageContent => "chat-message-content",
+            Self::ResponsesEnvelopeJson => "responses-envelope-json",
+            Self::ResponsesMessageContent => "responses-message-content",
+            Self::LocalResponseValidation => "local-response-validation",
+            Self::LocalResponseSchema => "local-response-schema",
+            Self::LocalResponseCoverage => "local-response-coverage",
+            Self::LocalResponseUnknownToken => "local-response-unknown-token",
+            Self::LocalResponseDuplicateToken => "local-response-duplicate-token",
+            Self::LocalResponseConfidence => "local-response-confidence",
+        }
+    }
+}
+
 /// Sanitized error returned by the AI transport and later service layer.
 ///
 /// It intentionally has no `body`, `header`, `url`, `path`, or key field.
@@ -80,6 +129,7 @@ pub struct AiServiceError {
     kind: AiServiceErrorKind,
     status: Option<u16>,
     request_id: Option<String>,
+    diagnostic_stage: AiDiagnosticStage,
 }
 
 impl AiServiceError {
@@ -88,6 +138,7 @@ impl AiServiceError {
             kind,
             status: None,
             request_id: None,
+            diagnostic_stage: AiDiagnosticStage::NotApplicable,
         }
     }
 
@@ -96,6 +147,7 @@ impl AiServiceError {
             kind: AiServiceErrorKind::Cancelled,
             status: None,
             request_id: None,
+            diagnostic_stage: AiDiagnosticStage::NotApplicable,
         }
     }
 
@@ -104,23 +156,47 @@ impl AiServiceError {
             kind: AiServiceErrorKind::Configuration,
             status: None,
             request_id: None,
+            diagnostic_stage: AiDiagnosticStage::NotApplicable,
         }
     }
 
     pub(crate) fn invalid_response() -> Self {
+        Self::invalid_response_at(AiDiagnosticStage::NotApplicable)
+    }
+
+    pub(crate) fn invalid_response_at(diagnostic_stage: AiDiagnosticStage) -> Self {
         Self {
             kind: AiServiceErrorKind::InvalidResponse,
             status: None,
             request_id: None,
+            diagnostic_stage,
         }
     }
 
     pub(crate) fn request_failed(status: Option<u16>, request_id: Option<String>) -> Self {
+        let diagnostic_stage = if status.is_some() {
+            AiDiagnosticStage::RequestHttpStatus
+        } else {
+            AiDiagnosticStage::RequestTransport
+        };
+        Self::request_failed_at(status, request_id, diagnostic_stage)
+    }
+
+    pub(crate) fn request_failed_at(
+        status: Option<u16>,
+        request_id: Option<String>,
+        diagnostic_stage: AiDiagnosticStage,
+    ) -> Self {
         Self {
             kind: AiServiceErrorKind::RequestFailed,
             status,
             request_id,
+            diagnostic_stage,
         }
+    }
+
+    pub(crate) fn request_deadline_exceeded() -> Self {
+        Self::request_failed_at(None, None, AiDiagnosticStage::RequestDeadlineExceeded)
     }
 
     #[must_use]
@@ -136,6 +212,12 @@ impl AiServiceError {
     #[must_use]
     pub fn request_id(&self) -> Option<&str> {
         self.request_id.as_deref()
+    }
+
+    /// Returns only a fixed local classification, never remote content.
+    #[must_use]
+    pub const fn diagnostic_stage(&self) -> AiDiagnosticStage {
+        self.diagnostic_stage
     }
 }
 
@@ -181,7 +263,7 @@ impl fmt::Display for AiServiceError {
 
 impl std::error::Error for AiServiceError {}
 
-/// Sends one prepared batch to an OpenAI-compatible `/chat/completions` API.
+/// Sends one prepared batch using the protocol selected by its profile.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenAiCompatibleTransport;
 
@@ -429,7 +511,8 @@ impl OpenAiCompatibleTransport {
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .map_err(|_| AiServiceError::configuration())?;
-        let endpoint = chat_completions_endpoint(profile.base_url())?;
+        let protocol = profile.api_protocol();
+        let endpoint = analysis_endpoint(profile.base_url(), protocol)?;
         let deadline = Instant::now()
             .checked_add(Duration::from_secs(profile.timeout_secs()))
             .ok_or_else(AiServiceError::configuration)?;
@@ -438,7 +521,13 @@ impl OpenAiCompatibleTransport {
             devresidue_core::ai::StructuredOutputMode::Auto
             | devresidue_core::ai::StructuredOutputMode::JsonSchema => ResponseFormat::JsonSchema,
         };
-        let strict_body = request_body(profile.model(), &batch.entries, paths, first_format)?;
+        let strict_body = analysis_request_body(
+            protocol,
+            profile.model(),
+            &batch.entries,
+            paths,
+            first_format,
+        )?;
         let first_response = send_with_retries(
             &client,
             &endpoint,
@@ -462,7 +551,8 @@ impl OpenAiCompatibleTransport {
             if cancellation.is_cancelled() {
                 return Err(AiServiceError::cancelled());
             }
-            let fallback_body = request_body(
+            let fallback_body = analysis_request_body(
+                protocol,
                 profile.model(),
                 &batch.entries,
                 paths,
@@ -493,21 +583,47 @@ impl OpenAiCompatibleTransport {
             ));
         }
 
-        let envelope: ChatCompletionEnvelope = response
-            .json()
-            .map_err(|_| AiServiceError::invalid_response())?;
+        let content = match protocol {
+            AiApiProtocol::OpenAiCompatible => {
+                let envelope: ChatCompletionEnvelope = response.json().map_err(|_| {
+                    AiServiceError::invalid_response_at(AiDiagnosticStage::ChatEnvelopeJson)
+                })?;
+                envelope
+                    .choices
+                    .first()
+                    .and_then(|choice| chat_message_text(choice.message.content.as_ref()))
+                    .ok_or_else(|| {
+                        AiServiceError::invalid_response_at(AiDiagnosticStage::ChatMessageContent)
+                    })?
+            }
+            AiApiProtocol::OpenAiResponses => {
+                let envelope: ResponsesEnvelope = response.json().map_err(|_| {
+                    AiServiceError::invalid_response_at(AiDiagnosticStage::ResponsesEnvelopeJson)
+                })?;
+                responses_message_text(&envelope).ok_or_else(|| {
+                    AiServiceError::invalid_response_at(AiDiagnosticStage::ResponsesMessageContent)
+                })?
+            }
+        };
         if cancellation.is_cancelled() {
             return Err(AiServiceError::cancelled());
         }
-        let content = envelope
-            .choices
-            .first()
-            .and_then(|choice| chat_message_text(choice.message.content.as_ref()))
-            .ok_or_else(AiServiceError::invalid_response)?;
 
         ResponseValidator::for_batch(batch)
             .validate(unwrap_single_json_fence(&content))
-            .map_err(|_| AiServiceError::invalid_response())
+            .map_err(|error| {
+                AiServiceError::invalid_response_at(validation_diagnostic_stage(error))
+            })
+    }
+}
+
+const fn validation_diagnostic_stage(error: ResponseValidationError) -> AiDiagnosticStage {
+    match error {
+        ResponseValidationError::Schema => AiDiagnosticStage::LocalResponseSchema,
+        ResponseValidationError::Coverage => AiDiagnosticStage::LocalResponseCoverage,
+        ResponseValidationError::UnknownToken => AiDiagnosticStage::LocalResponseUnknownToken,
+        ResponseValidationError::DuplicateToken => AiDiagnosticStage::LocalResponseDuplicateToken,
+        ResponseValidationError::Confidence => AiDiagnosticStage::LocalResponseConfidence,
     }
 }
 
@@ -537,6 +653,43 @@ fn chat_message_text(content: Option<&Value>) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Extracts one complete assistant message from a Responses API envelope.
+/// Reasoning or tool output is never considered model JSON; exactly one
+/// completed assistant message made only of `output_text` blocks is accepted.
+fn responses_message_text(envelope: &ResponsesEnvelope) -> Option<String> {
+    if envelope.status != "completed" {
+        return None;
+    }
+
+    let mut message = None;
+    for item in &envelope.output {
+        if item.kind != "message" || item.role.as_deref() != Some("assistant") {
+            continue;
+        }
+        if message.is_some() {
+            return None;
+        }
+        message = Some(responses_output_text(item.content.as_deref()?)?);
+    }
+    message
+}
+
+fn responses_output_text(content: &[ResponsesContent]) -> Option<String> {
+    let mut text = String::new();
+    for block in content {
+        if block.kind != "output_text" {
+            return None;
+        }
+        let part = block.text.as_deref()?;
+        let new_len = text.len().checked_add(part.len())?;
+        if new_len > MAX_MODEL_CONTENT_BYTES {
+            return None;
+        }
+        text.push_str(part);
+    }
+    (!text.is_empty()).then_some(text)
 }
 
 fn bounded_text(text: &str) -> Option<&str> {
@@ -572,6 +725,19 @@ fn chat_completions_endpoint(base_url: &str) -> Result<String, AiServiceError> {
     Ok(endpoint)
 }
 
+fn responses_endpoint(base_url: &str) -> Result<String, AiServiceError> {
+    let endpoint = format!("{}/responses", base_url.trim_end_matches('/'));
+    reqwest::Url::parse(&endpoint).map_err(|_| AiServiceError::configuration())?;
+    Ok(endpoint)
+}
+
+fn analysis_endpoint(base_url: &str, protocol: AiApiProtocol) -> Result<String, AiServiceError> {
+    match protocol {
+        AiApiProtocol::OpenAiResponses => responses_endpoint(base_url),
+        AiApiProtocol::OpenAiCompatible => chat_completions_endpoint(base_url),
+    }
+}
+
 fn models_endpoint(base_url: &str) -> Result<String, AiServiceError> {
     let endpoint = format!("{}/models", base_url.trim_end_matches('/'));
     reqwest::Url::parse(&endpoint).map_err(|_| AiServiceError::configuration())?;
@@ -584,12 +750,27 @@ enum ResponseFormat {
     JsonObject,
 }
 
-fn request_body(
+fn analysis_request_body(
+    protocol: AiApiProtocol,
     model: &str,
     entries: &[devresidue_core::ai::SanitizedEntry],
     paths: Option<&[PathBuf]>,
     response_format: ResponseFormat,
 ) -> Result<Value, AiServiceError> {
+    match protocol {
+        AiApiProtocol::OpenAiResponses => {
+            responses_request_body(model, entries, paths, response_format)
+        }
+        AiApiProtocol::OpenAiCompatible => {
+            chat_completions_request_body(model, entries, paths, response_format)
+        }
+    }
+}
+
+fn sanitized_entries_json(
+    entries: &[devresidue_core::ai::SanitizedEntry],
+    paths: Option<&[PathBuf]>,
+) -> Result<String, AiServiceError> {
     let entries = entries
         .iter()
         .enumerate()
@@ -608,8 +789,16 @@ fn request_body(
             Ok(entry)
         })
         .collect::<Result<Vec<_>, AiServiceError>>()?;
-    let entries_content =
-        serde_json::to_string(&entries).map_err(|_| AiServiceError::configuration())?;
+    serde_json::to_string(&entries).map_err(|_| AiServiceError::configuration())
+}
+
+fn chat_completions_request_body(
+    model: &str,
+    entries: &[devresidue_core::ai::SanitizedEntry],
+    paths: Option<&[PathBuf]>,
+    response_format: ResponseFormat,
+) -> Result<Value, AiServiceError> {
+    let entries_content = sanitized_entries_json(entries, paths)?;
     let response_format = match response_format {
         ResponseFormat::JsonSchema => json!({
             "type": "json_schema",
@@ -632,6 +821,32 @@ fn request_body(
     }))
 }
 
+fn responses_request_body(
+    model: &str,
+    entries: &[devresidue_core::ai::SanitizedEntry],
+    paths: Option<&[PathBuf]>,
+    response_format: ResponseFormat,
+) -> Result<Value, AiServiceError> {
+    let entries_content = sanitized_entries_json(entries, paths)?;
+    let format = match response_format {
+        ResponseFormat::JsonSchema => json!({
+            "type": "json_schema",
+            "name": "devresidue_ai_suggestions",
+            "strict": true,
+            "schema": suggestion_schema(entries.len()),
+        }),
+        ResponseFormat::JsonObject => json!({"type": "json_object"}),
+    };
+    Ok(json!({
+        "model": model,
+        "temperature": 0,
+        "store": false,
+        "instructions": SYSTEM_PROMPT,
+        "input": entries_content,
+        "text": {"format": format},
+    }))
+}
+
 fn send_with_retries(
     client: &Client,
     endpoint: &str,
@@ -647,7 +862,7 @@ fn send_with_retries(
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .filter(|duration| !duration.is_zero())
-            .ok_or_else(|| AiServiceError::request_failed(None, None))?;
+            .ok_or_else(AiServiceError::request_deadline_exceeded)?;
         let response = client
             .post(endpoint)
             .timeout(remaining)
@@ -665,13 +880,24 @@ fn send_with_retries(
                 wait_for_retry(delay, cancellation, deadline)?;
             }
             Ok(response) => return Ok(response),
-            Err(_) if attempt < MAX_RETRIES => {
-                wait_for_retry(exponential_backoff(attempt), cancellation, deadline)?;
+            Err(error) if attempt < MAX_RETRIES => {
+                wait_for_transport_retry(
+                    exponential_backoff(attempt),
+                    cancellation,
+                    deadline,
+                    transport_error_stage(&error),
+                )?;
             }
-            Err(_) => return Err(AiServiceError::request_failed(None, None)),
+            Err(error) => {
+                return Err(AiServiceError::request_failed_at(
+                    None,
+                    None,
+                    transport_error_stage(&error),
+                ));
+            }
         }
     }
-    Err(AiServiceError::request_failed(None, None))
+    Err(AiServiceError::request_deadline_exceeded())
 }
 
 fn send_connection_with_retries(
@@ -688,7 +914,7 @@ fn send_connection_with_retries(
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .filter(|duration| !duration.is_zero())
-            .ok_or_else(|| AiServiceError::request_failed(None, None))?;
+            .ok_or_else(AiServiceError::request_deadline_exceeded)?;
         let response = client
             .get(endpoint)
             .timeout(remaining)
@@ -704,13 +930,34 @@ fn send_connection_with_retries(
                 wait_for_retry(delay, cancellation, deadline)?;
             }
             Ok(response) => return Ok(response),
-            Err(_) if attempt < MAX_RETRIES => {
-                wait_for_retry(exponential_backoff(attempt), cancellation, deadline)?;
+            Err(error) if attempt < MAX_RETRIES => {
+                wait_for_transport_retry(
+                    exponential_backoff(attempt),
+                    cancellation,
+                    deadline,
+                    transport_error_stage(&error),
+                )?;
             }
-            Err(_) => return Err(AiServiceError::request_failed(None, None)),
+            Err(error) => {
+                return Err(AiServiceError::request_failed_at(
+                    None,
+                    None,
+                    transport_error_stage(&error),
+                ));
+            }
         }
     }
-    Err(AiServiceError::request_failed(None, None))
+    Err(AiServiceError::request_deadline_exceeded())
+}
+
+fn transport_error_stage(error: &reqwest::Error) -> AiDiagnosticStage {
+    if error.is_timeout() {
+        AiDiagnosticStage::RequestTimeout
+    } else if error.is_connect() {
+        AiDiagnosticStage::RequestConnection
+    } else {
+        AiDiagnosticStage::RequestTransport
+    }
 }
 
 fn is_retryable_status(status: u16) -> bool {
@@ -747,7 +994,7 @@ fn wait_for_retry(
 ) -> Result<(), AiServiceError> {
     let until = Instant::now()
         .checked_add(delay)
-        .ok_or_else(|| AiServiceError::request_failed(None, None))?;
+        .ok_or_else(AiServiceError::request_deadline_exceeded)?;
     while Instant::now() < until {
         if cancellation.is_cancelled() {
             return Err(AiServiceError::cancelled());
@@ -756,7 +1003,7 @@ fn wait_for_retry(
         let remaining_budget = deadline
             .checked_duration_since(Instant::now())
             .filter(|duration| !duration.is_zero())
-            .ok_or_else(|| AiServiceError::request_failed(None, None))?;
+            .ok_or_else(AiServiceError::request_deadline_exceeded)?;
         thread::sleep(
             remaining_delay
                 .min(remaining_budget)
@@ -768,6 +1015,21 @@ fn wait_for_retry(
     } else {
         Ok(())
     }
+}
+
+fn wait_for_transport_retry(
+    delay: Duration,
+    cancellation: &AiCancellationToken,
+    deadline: Instant,
+    failure_stage: AiDiagnosticStage,
+) -> Result<(), AiServiceError> {
+    wait_for_retry(delay, cancellation, deadline).map_err(|error| {
+        if error.diagnostic_stage() == AiDiagnosticStage::RequestDeadlineExceeded {
+            AiServiceError::request_failed_at(None, None, failure_stage)
+        } else {
+            error
+        }
+    })
 }
 
 fn request_id(response: &Response) -> Option<String> {
@@ -882,6 +1144,27 @@ struct ChatChoice {
 #[derive(Deserialize)]
 struct ChatMessage {
     content: Option<Value>,
+}
+
+#[derive(Deserialize)]
+struct ResponsesEnvelope {
+    status: String,
+    output: Vec<ResponsesOutputItem>,
+}
+
+#[derive(Deserialize)]
+struct ResponsesOutputItem {
+    #[serde(rename = "type")]
+    kind: String,
+    role: Option<String>,
+    content: Option<Vec<ResponsesContent>>,
+}
+
+#[derive(Deserialize)]
+struct ResponsesContent {
+    #[serde(rename = "type")]
+    kind: String,
+    text: Option<String>,
 }
 
 #[derive(Deserialize)]

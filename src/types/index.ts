@@ -333,6 +333,7 @@ export type DispositionResultDto = {
 // password field separately to the backend adapter and clears it immediately.
 
 export type StructuredOutputMode = "auto" | "json-schema" | "json-object";
+export type AiApiProtocol = "openai-responses" | "openai-compatible";
 
 /** Closed confirmation vocabulary: UNKNOWN requires a user decision first. */
 export type AiFinalRisk = Exclude<RiskLevel, "unknown">;
@@ -369,6 +370,8 @@ export type AiProfileDto = {
   name: string;
   baseUrl: string;
   model: string;
+  apiProtocol: AiApiProtocol;
+  structuredOutput: StructuredOutputMode;
   enabled: boolean;
   isActive: boolean;
 };
@@ -384,6 +387,7 @@ export type AiProfileInput = {
   name: string;
   baseUrl: string;
   model: string;
+  apiProtocol: AiApiProtocol;
   structuredOutput: StructuredOutputMode;
   timeoutSecs: number;
   enabled: boolean;

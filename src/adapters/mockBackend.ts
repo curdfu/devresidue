@@ -669,6 +669,8 @@ export class MockBackend implements Backend {
           name: profile.name,
           baseUrl: profile.baseUrl,
           model: profile.model,
+          apiProtocol: profile.apiProtocol,
+          structuredOutput: profile.structuredOutput,
           enabled: profile.enabled,
         })),
       };
@@ -1292,6 +1294,8 @@ export class MockBackend implements Backend {
       name,
       baseUrl,
       model,
+      apiProtocol: input.apiProtocol,
+      structuredOutput: input.structuredOutput,
       enabled: input.enabled,
     };
     const index = this.aiProfiles.findIndex((candidate) => candidate.id === id);
@@ -1503,6 +1507,8 @@ export class MockBackend implements Backend {
       name: profile.name,
       baseUrl: profile.baseUrl,
       model: profile.model,
+      apiProtocol: profile.apiProtocol,
+      structuredOutput: profile.structuredOutput,
       enabled: profile.enabled,
       isActive: profile.id === this.activeAiProfileId,
     };
@@ -1595,6 +1601,11 @@ function readStoredMockAiProfile(value: unknown): StoredMockAiProfile[] {
       name: candidate.name,
       baseUrl: candidate.baseUrl,
       model: candidate.model,
+      apiProtocol: candidate.apiProtocol === "openai-responses" ? "openai-responses" : "openai-compatible",
+      structuredOutput:
+        candidate.structuredOutput === "json-schema" || candidate.structuredOutput === "json-object"
+          ? candidate.structuredOutput
+          : "auto",
       enabled: candidate.enabled,
     },
   ];

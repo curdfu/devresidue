@@ -187,10 +187,20 @@ pub struct DispositionResultDto {
 
 // ---- Remote-AI DTOs (no secret / no path) ---------------------------------
 
+/// Remote API protocol accepted when a profile is created or updated.
+/// This is non-secret metadata and is returned to let existing profiles be
+/// edited without changing protocol implicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AiApiProtocolArg {
+    #[serde(rename = "openai-responses")]
+    OpenAiResponses,
+    #[serde(rename = "openai-compatible")]
+    OpenAiCompatible,
+}
+
 /// Closed structured-output preference accepted when a remote-AI profile is
-/// created or updated. The profile response deliberately omits this and every
-/// secret-adjacent field; the frontend keeps the submitted preference only for
-/// the one-shot edit request.
+/// created or updated. It is non-secret metadata and is returned so editing a
+/// profile does not overwrite its existing preference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StructuredOutputModeArg {
@@ -220,6 +230,8 @@ pub struct AiProfileDto {
     pub name: String,
     pub base_url: String,
     pub model: String,
+    pub api_protocol: AiApiProtocolArg,
+    pub structured_output: StructuredOutputModeArg,
     pub enabled: bool,
     pub is_active: bool,
 }

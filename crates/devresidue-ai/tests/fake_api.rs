@@ -5,10 +5,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use devresidue_ai::{AiCancellationToken, OpenAiCompatibleTransport};
+use devresidue_ai::{AiCancellationToken, AiDiagnosticStage, OpenAiCompatibleTransport};
 use devresidue_core::ai::{
-    AgeBucket, AiBatchId, AiEntryToken, AiProfile, AiProfileId, AiZone, PreparedBatch,
-    SanitizedEntry, SizeBucket, StructuredOutputMode,
+    AgeBucket, AiApiProtocol, AiBatchId, AiEntryToken, AiProfile, AiProfileId, AiZone,
+    PreparedBatch, SanitizedEntry, SizeBucket, StructuredOutputMode,
 };
 use devresidue_core::RiskLevel;
 use serde_json::json;
@@ -99,6 +99,18 @@ fn chat_completion_body_with_content(content: serde_json::Value) -> String {
     json!({"choices": [{"message": {"content": content}}]}).to_string()
 }
 
+fn responses_body(content: &str) -> String {
+    json!({
+        "status": "completed",
+        "output": [{
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": content}]
+        }]
+    })
+    .to_string()
+}
+
 fn read_request(stream: &mut TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -170,6 +182,19 @@ fn profile_with_mode(
         "test-model".to_string(),
         structured_output_mode,
         timeout_secs,
+        true,
+    )
+}
+
+fn responses_profile(base_url: String) -> AiProfile {
+    AiProfile::with_api_protocol(
+        AiProfileId::parse(PROFILE_ID).unwrap(),
+        "responses test endpoint".to_string(),
+        base_url,
+        "test-model".to_string(),
+        AiApiProtocol::OpenAiResponses,
+        StructuredOutputMode::JsonSchema,
+        5,
         true,
     )
 }
@@ -248,6 +273,44 @@ fn strict_schema_request_returns_only_validated_in_memory_suggestions() {
     assert_eq!(
         request_body["response_format"]["json_schema"]["schema"]["properties"]["suggestions"]
             ["maxItems"],
+        json!(1)
+    );
+}
+
+#[test]
+fn responses_api_uses_nonpersisted_structured_output_and_validates_result() {
+    let content = r#"{
+        "suggestions": [{
+            "id": "9f3c7d21-1a2b-4c5d-8e6f-0a1b2c3d4e5f",
+            "suggested_risk": "review",
+            "confidence": 0.8,
+            "reason": "本地缓存，建议人工确认。",
+            "product_guess": null
+        }]
+    }"#;
+    let api = FakeApi::responses(vec![(200, responses_body(content))]);
+
+    let suggestions = OpenAiCompatibleTransport::new()
+        .analyze(
+            &responses_profile(api.base_url.clone()),
+            "sk-test-transport-key",
+            &batch(),
+            &AiCancellationToken::new(),
+        )
+        .unwrap();
+
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(suggestions[0].suggested_risk, RiskLevel::Review);
+
+    let request = api.received_requests(1).pop().unwrap();
+    assert!(request.starts_with("POST /v1/responses HTTP/1.1\r\n"));
+    let body: serde_json::Value =
+        serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(body["store"], json!(false));
+    assert_eq!(body["text"]["format"]["type"], json!("json_schema"));
+    assert!(body.get("response_format").is_none());
+    assert_eq!(
+        body["text"]["format"]["schema"]["properties"]["suggestions"]["minItems"],
         json!(1)
     );
 }
@@ -577,7 +640,10 @@ fn invalid_model_content_is_rejected_without_echoing_tokens_or_paths() {
     })
     .to_string();
 
-    for content in [unknown_token, extra_path] {
+    for (content, expected_stage) in [
+        (unknown_token, AiDiagnosticStage::LocalResponseUnknownToken),
+        (extra_path, AiDiagnosticStage::LocalResponseSchema),
+    ] {
         let api = FakeApi::success(&content);
         let error = OpenAiCompatibleTransport::new()
             .analyze(
@@ -592,6 +658,7 @@ fn invalid_model_content_is_rejected_without_echoing_tokens_or_paths() {
             error.kind(),
             devresidue_ai::AiServiceErrorKind::InvalidResponse
         );
+        assert_eq!(error.diagnostic_stage(), expected_stage);
         assert!(!format!("{error:?}").contains("c0ffee00"));
         assert!(!format!("{error:?}").contains(r"C:\private\cache"));
         assert_eq!(api.received_requests(1).len(), 1);
@@ -706,6 +773,7 @@ fn total_timeout_bounds_an_inflight_request() {
         error.kind(),
         devresidue_ai::AiServiceErrorKind::RequestFailed
     );
+    assert_eq!(error.diagnostic_stage(), AiDiagnosticStage::RequestTimeout);
     assert!(start.elapsed() < Duration::from_secs(2));
     assert_eq!(api.received_requests(1).len(), 1);
 }

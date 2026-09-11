@@ -109,6 +109,7 @@ export class TauriBackend implements Backend {
       name: input.name,
       baseUrl: input.baseUrl,
       model: input.model,
+      apiProtocol: input.apiProtocol,
       structuredOutput: input.structuredOutput,
       timeoutSecs: input.timeoutSecs,
       enabled: input.enabled,

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, KeyRound, LoaderCircle, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
-import type { AiProfileDto, AiProfileInput, StructuredOutputMode } from "@/types";
+import type { AiApiProtocol, AiProfileDto, AiProfileInput, StructuredOutputMode } from "@/types";
 import { useAiStore } from "@/stores/aiStore";
 
 const DEFAULT_FORM = {
   name: "",
   baseUrl: "https://api.openai.com/v1",
   model: "gpt-4.1-mini",
+  apiProtocol: "openai-compatible" as AiApiProtocol,
   structuredOutput: "auto" as StructuredOutputMode,
   timeoutSecs: 45,
   enabled: true,
@@ -60,7 +61,8 @@ export function AiProfilePanel() {
       name: profile.name,
       baseUrl: profile.baseUrl,
       model: profile.model,
-      structuredOutput: "auto",
+      apiProtocol: profile.apiProtocol,
+      structuredOutput: profile.structuredOutput,
       timeoutSecs: 45,
       enabled: profile.enabled,
     });
@@ -280,6 +282,19 @@ export function AiProfilePanel() {
                 setForm((current) => ({ ...current, timeoutSecs: Number(event.target.value) || 1 }))
               }
             />
+          </label>
+          <label style={{ color: "var(--text-mute)", fontSize: 12 }}>
+            接口模式
+            <select
+              style={{ marginLeft: 6 }}
+              value={form.apiProtocol}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, apiProtocol: event.target.value as AiApiProtocol }))
+              }
+            >
+              <option value="openai-compatible">OpenAI Compatible</option>
+              <option value="openai-responses">OpenAI Responses</option>
+            </select>
           </label>
           <label style={{ color: "var(--text-mute)", fontSize: 12 }}>
             结构化输出

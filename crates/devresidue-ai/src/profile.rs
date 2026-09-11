@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use devresidue_core::ai::{
-    AiProfile, AiProfileFilePort, AiProfileId, EnvKeyStore, PendingProfileTxn, ProfileFileLock,
-    ProfileTxnOp, ProfileTxnState, RecoveryStatus, StructuredOutputMode,
+    AiApiProtocol, AiProfile, AiProfileFilePort, AiProfileId, EnvKeyStore, PendingProfileTxn,
+    ProfileFileLock, ProfileTxnOp, ProfileTxnState, RecoveryStatus, StructuredOutputMode,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -28,6 +28,7 @@ pub struct AiProfileInput {
     pub name: String,
     pub base_url: String,
     pub model: String,
+    pub api_protocol: AiApiProtocol,
     pub structured_output_mode: StructuredOutputMode,
     pub timeout_secs: u64,
     pub enabled: bool,
@@ -366,11 +367,12 @@ impl AiProfileStore {
         {
             // `AiProfile` is immutable by design.  Rebuild the non-secret
             // value with the same settings and disabled state.
-            *profile = AiProfile::new(
+            *profile = AiProfile::with_api_protocol(
                 profile.id().clone(),
                 profile.name().to_string(),
                 profile.base_url().to_string(),
                 profile.model().to_string(),
+                profile.api_protocol(),
                 profile.structured_output_mode(),
                 profile.timeout_secs(),
                 false,
@@ -632,11 +634,12 @@ enum MarkerRead {
 }
 
 fn profile_from_input(id: AiProfileId, input: AiProfileInput) -> AiProfile {
-    AiProfile::new(
+    AiProfile::with_api_protocol(
         id,
         input.name,
         input.base_url,
         input.model,
+        input.api_protocol,
         input.structured_output_mode,
         input.timeout_secs,
         input.enabled,
@@ -777,6 +780,8 @@ struct PersistedProfile {
     base_url: String,
     model: String,
     api_key_env: String,
+    #[serde(default)]
+    api_protocol: PersistedAiApiProtocol,
     structured_output_mode: PersistedStructuredOutputMode,
     timeout_secs: u64,
     enabled: bool,
@@ -790,6 +795,7 @@ impl PersistedProfile {
             base_url: profile.base_url().to_string(),
             model: profile.model().to_string(),
             api_key_env: profile.api_key_env().as_str().to_string(),
+            api_protocol: PersistedAiApiProtocol::from_core(profile.api_protocol()),
             structured_output_mode: PersistedStructuredOutputMode::from_core(
                 profile.structured_output_mode(),
             ),
@@ -818,15 +824,48 @@ impl PersistedProfile {
 
     fn into_profile(self) -> Result<AiProfile, String> {
         self.validate()?;
-        Ok(AiProfile::new(
+        Ok(AiProfile::with_api_protocol(
             self.id,
             self.name,
             self.base_url,
             self.model,
+            self.api_protocol.to_core(),
             self.structured_output_mode.to_core(),
             self.timeout_secs,
             self.enabled,
         ))
+    }
+}
+
+/// Stable profile-file protocol values. Absent values are legacy profiles and
+/// therefore preserve the original Chat Completions compatibility behavior.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum PersistedAiApiProtocol {
+    #[serde(rename = "openai_responses")]
+    OpenAiResponses,
+    #[serde(rename = "openai_compatible")]
+    OpenAiCompatible,
+}
+
+impl Default for PersistedAiApiProtocol {
+    fn default() -> Self {
+        Self::OpenAiCompatible
+    }
+}
+
+impl PersistedAiApiProtocol {
+    fn from_core(protocol: AiApiProtocol) -> Self {
+        match protocol {
+            AiApiProtocol::OpenAiResponses => Self::OpenAiResponses,
+            AiApiProtocol::OpenAiCompatible => Self::OpenAiCompatible,
+        }
+    }
+
+    fn to_core(self) -> AiApiProtocol {
+        match self {
+            Self::OpenAiResponses => AiApiProtocol::OpenAiResponses,
+            Self::OpenAiCompatible => AiApiProtocol::OpenAiCompatible,
+        }
     }
 }
 

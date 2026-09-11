@@ -262,6 +262,9 @@ struct AiProfileInputArgs {
     base_url: String,
     #[arg(long)]
     model: String,
+    /// Remote endpoint protocol: openai-compatible or openai-responses.
+    #[arg(long, default_value = "openai-compatible", value_name = "PROTOCOL")]
+    api_protocol: String,
     #[arg(long, default_value = "auto", value_name = "MODE")]
     structured_output: String,
     #[arg(long, default_value_t = 120, value_name = "SECONDS")]

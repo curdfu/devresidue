@@ -14,7 +14,7 @@ use devresidue_ai::{
     AiAdvisorService, AiCancellationToken, AiConfirmationConfig, AiConfirmationSelection,
     AiProfileInput, AiProfileStore, AiReviewBatch, OpenAiCompatibleTransport,
 };
-use devresidue_core::ai::{AiProfileId, RecoveryStatus, StructuredOutputMode};
+use devresidue_core::ai::{AiApiProtocol, AiProfileId, RecoveryStatus, StructuredOutputMode};
 use devresidue_core::{ResidueCategory, RiskLevel, ScanItem, ScanItemId};
 use devresidue_platform_windows::env_key::WindowsUserEnvKeyStore;
 use devresidue_platform_windows::profile_file::WindowsAiProfileFilePort;
@@ -87,10 +87,11 @@ fn run_profile(data_dir: &Path, cmd: AiProfileCommand) -> Result<(), String> {
             }
             for profile in state.profiles() {
                 println!(
-                    "{}  name={}  model={}  enabled={}  timeout_secs={}  structured_output={:?}",
+                    "{}  name={}  model={}  api_protocol={:?}  enabled={}  timeout_secs={}  structured_output={:?}",
                     profile.id(),
                     profile.name(),
                     profile.model(),
+                    profile.api_protocol(),
                     profile.enabled(),
                     profile.timeout_secs(),
                     profile.structured_output_mode(),
@@ -348,10 +349,19 @@ fn profile_input(args: AiProfileInputArgs) -> Result<AiProfileInput, String> {
         name: args.name,
         base_url: args.base_url,
         model: args.model,
+        api_protocol: parse_api_protocol(&args.api_protocol)?,
         structured_output_mode: parse_structured_output_mode(&args.structured_output)?,
         timeout_secs: args.timeout_secs,
         enabled: !args.disabled,
     })
+}
+
+fn parse_api_protocol(text: &str) -> Result<AiApiProtocol, String> {
+    match text {
+        "openai-compatible" => Ok(AiApiProtocol::OpenAiCompatible),
+        "openai-responses" => Ok(AiApiProtocol::OpenAiResponses),
+        _ => Err("API protocol must be openai-compatible or openai-responses".to_string()),
+    }
 }
 
 fn parse_structured_output_mode(text: &str) -> Result<StructuredOutputMode, String> {

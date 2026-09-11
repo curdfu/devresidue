@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use devresidue_ai::{AiProfileInput, AiProfileStore};
 use devresidue_core::ai::{
-    AiKeyEnvName, AiProfileFilePort, EnvKeyStore, PendingProfileTxn, ProfileFileLock, ProfileTxnOp,
-    ProfileTxnState, RecoveryStatus, StructuredOutputMode,
+    AiApiProtocol, AiKeyEnvName, AiProfileFilePort, EnvKeyStore, PendingProfileTxn,
+    ProfileFileLock, ProfileTxnOp, ProfileTxnState, RecoveryStatus, StructuredOutputMode,
 };
 use uuid::Uuid;
 
@@ -149,6 +149,7 @@ fn input(name: &str) -> AiProfileInput {
         name: name.to_string(),
         base_url: "https://example.invalid/v1".to_string(),
         model: "model-x".to_string(),
+        api_protocol: AiApiProtocol::OpenAiCompatible,
         structured_output_mode: StructuredOutputMode::Auto,
         timeout_secs: 120,
         enabled: true,
@@ -168,6 +169,7 @@ fn profile_file_never_contains_the_api_key_and_round_trips_non_secret_fields() {
     assert!(!serialized.contains(key));
     assert!(serialized.contains(profile.id().as_str()));
     assert!(serialized.contains("\"baseUrl\""));
+    assert!(serialized.contains("\"apiProtocol\": \"openai_compatible\""));
     assert!(serialized.contains("\"structuredOutputMode\": \"auto\""));
     assert_eq!(profile.name(), "gateway");
     assert_eq!(
@@ -178,6 +180,29 @@ fn profile_file_never_contains_the_api_key_and_round_trips_non_secret_fields() {
     let loaded = store.load().unwrap();
     assert_eq!(loaded.profiles().len(), 1);
     assert_eq!(loaded.profiles()[0].id(), profile.id());
+}
+
+#[test]
+fn legacy_profile_without_api_protocol_defaults_to_openai_compatible() {
+    let dir = TempDir::new();
+    let store = open_store(&dir);
+    let keys = FakeEnvKeyStore::default();
+    let profile = store.upsert(input("legacy"), "legacy-key", &keys).unwrap();
+
+    let mut serialized: serde_json::Value =
+        serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
+    serialized["profiles"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("apiProtocol");
+    fs::write(store.path(), serde_json::to_vec(&serialized).unwrap()).unwrap();
+
+    let loaded = store.load().unwrap();
+    assert_eq!(loaded.profiles()[0].id(), profile.id());
+    assert_eq!(
+        loaded.profiles()[0].api_protocol(),
+        AiApiProtocol::OpenAiCompatible
+    );
 }
 
 #[test]

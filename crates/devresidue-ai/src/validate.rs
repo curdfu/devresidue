@@ -14,6 +14,18 @@ const MAX_REASON_CHARS: usize = 240;
 const MAX_PRODUCT_GUESS_CHARS: usize = 80;
 const REDACTED_MODEL_TEXT: &str = "<redacted-model-text>";
 
+/// Fixed, non-sensitive reason a model response did not pass local validation.
+///
+/// This intentionally carries no model text, entry token, path, or credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseValidationError {
+    Schema,
+    Coverage,
+    UnknownToken,
+    DuplicateToken,
+    Confidence,
+}
+
 /// Validates a response against exactly one prepared, consented batch.
 #[derive(Debug, Clone)]
 pub struct ResponseValidator {
@@ -38,27 +50,27 @@ impl ResponseValidator {
     ///
     /// Errors deliberately identify only the validation category. They never
     /// include the raw model response, an entry token, a path, or a key.
-    pub fn validate(&self, body: &str) -> Result<Vec<AiSuggestion>, String> {
-        let response: ModelResponse = serde_json::from_str(body)
-            .map_err(|_| "AI response has an invalid or unsupported schema".to_string())?;
+    pub fn validate(&self, body: &str) -> Result<Vec<AiSuggestion>, ResponseValidationError> {
+        let response: ModelResponse =
+            serde_json::from_str(body).map_err(|_| ResponseValidationError::Schema)?;
 
         if response.suggestions.len() != self.expected_tokens.len() {
-            return Err("AI response does not cover the prepared batch exactly once".to_string());
+            return Err(ResponseValidationError::Coverage);
         }
 
         let mut seen = HashSet::with_capacity(response.suggestions.len());
         let mut suggestions = Vec::with_capacity(response.suggestions.len());
         for suggestion in response.suggestions {
             if !self.expected_tokens.contains(&suggestion.id) {
-                return Err("AI response contains an unregistered entry token".to_string());
+                return Err(ResponseValidationError::UnknownToken);
             }
             if !seen.insert(suggestion.id.clone()) {
-                return Err("AI response contains a duplicate entry token".to_string());
+                return Err(ResponseValidationError::DuplicateToken);
             }
             if !suggestion.confidence.is_finite()
                 || !(0.0_f64..=1.0_f64).contains(&suggestion.confidence)
             {
-                return Err("AI response confidence is outside the permitted range".to_string());
+                return Err(ResponseValidationError::Confidence);
             }
 
             suggestions.push(AiSuggestion {
@@ -76,7 +88,7 @@ impl ResponseValidator {
         }
 
         if seen != self.expected_tokens {
-            return Err("AI response does not cover the prepared batch exactly once".to_string());
+            return Err(ResponseValidationError::Coverage);
         }
 
         Ok(suggestions)

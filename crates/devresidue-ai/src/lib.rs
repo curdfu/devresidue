@@ -27,6 +27,7 @@ pub use profile::{AiProfileInput, AiProfileStore, StoredProfiles};
 pub use sanitize::MetadataSanitizer;
 pub use service::{AiAdvisorService, AiReviewBatch};
 pub use transport::{
-    AiCancellationToken, AiServiceError, AiServiceErrorKind, AiTransport, OpenAiCompatibleTransport,
+    AiCancellationToken, AiDiagnosticStage, AiServiceError, AiServiceErrorKind, AiTransport,
+    OpenAiCompatibleTransport,
 };
-pub use validate::ResponseValidator;
+pub use validate::{ResponseValidationError, ResponseValidator};
