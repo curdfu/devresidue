@@ -3,7 +3,7 @@
 //! This module deliberately keeps AI analysis and any user-rule confirmation
 //! in one process. Remote suggestions are never persisted or accepted back as
 //! free-form rule data; the confirmation grammar names only registered scan
-//! item ids and closed risk values.
+//! item ids and closed risk/category values.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
@@ -15,7 +15,7 @@ use devresidue_ai::{
     AiProfileInput, AiProfileStore, AiReviewBatch, OpenAiCompatibleTransport,
 };
 use devresidue_core::ai::{AiProfileId, RecoveryStatus, StructuredOutputMode};
-use devresidue_core::{RiskLevel, ScanItem, ScanItemId};
+use devresidue_core::{ResidueCategory, RiskLevel, ScanItem, ScanItemId};
 use devresidue_platform_windows::env_key::WindowsUserEnvKeyStore;
 use devresidue_platform_windows::profile_file::WindowsAiProfileFilePort;
 use devresidue_platform_windows::user_rule_tx::WindowsUserRuleTransactionPort;
@@ -310,7 +310,7 @@ fn render_suggestions(
 
 fn read_confirmation_line() -> Result<Vec<AiConfirmationSelection>, String> {
     eprint!(
-        "type ITEM_ID=RISK entries to confirm (or 'cancel'); allowed risks: safe, regenerable-local, regenerable-download, review, protected: "
+        "type ITEM_ID=RISK:CATEGORY entries to confirm (or 'cancel'); allowed risks: safe, regenerable-local, regenerable-download, review, protected; allowed categories: ai-agent, ide, developer-cache, package-cache, build-artifact, dependency, log, temporary, session, workspace-state, configuration, credential: "
     );
     io::stderr()
         .flush()
@@ -368,18 +368,24 @@ fn parse_profile_id(text: &str) -> Result<AiProfileId, String> {
 }
 
 /// Parses one explicit local confirmation line. The grammar is a comma-
-/// separated sequence of `ScanItemId=risk` values; it has no path or rule-text
-/// production and intentionally refuses `unknown`.
+/// separated sequence of `ScanItemId=risk:category` values; it has no path or
+/// rule-text production and intentionally refuses `unknown` risk or category.
 fn parse_confirmations(text: &str) -> Result<Vec<AiConfirmationSelection>, String> {
     let mut selections = Vec::new();
     let mut seen = HashSet::new();
     for pair in text.split(',') {
-        let (raw_id, raw_risk) = pair
+        let (raw_id, raw_decision) = pair
             .trim()
             .split_once('=')
-            .ok_or_else(|| "confirmation entries must use ITEM_ID=RISK".to_string())?;
-        if raw_risk.contains('=') {
-            return Err("confirmation entries must use ITEM_ID=RISK".to_string());
+            .ok_or_else(|| "confirmation entries must use ITEM_ID=RISK:CATEGORY".to_string())?;
+        if raw_decision.contains('=') {
+            return Err("confirmation entries must use ITEM_ID=RISK:CATEGORY".to_string());
+        }
+        let (raw_risk, raw_category) = raw_decision
+            .split_once(':')
+            .ok_or_else(|| "confirmation entries must use ITEM_ID=RISK:CATEGORY".to_string())?;
+        if raw_category.contains(':') {
+            return Err("confirmation entries must use ITEM_ID=RISK:CATEGORY".to_string());
         }
         let item_id = raw_id
             .trim()
@@ -402,7 +408,12 @@ fn parse_confirmations(text: &str) -> Result<Vec<AiConfirmationSelection>, Strin
                 )
             }
         };
-        selections.push(AiConfirmationSelection::new(item_id, final_risk));
+        let final_category = parse_confirmation_category(raw_category.trim())?;
+        selections.push(AiConfirmationSelection::new(
+            item_id,
+            final_risk,
+            final_category,
+        ));
     }
     if selections.is_empty() {
         return Err("at least one confirmation selection is required".to_string());
@@ -410,22 +421,51 @@ fn parse_confirmations(text: &str) -> Result<Vec<AiConfirmationSelection>, Strin
     Ok(selections)
 }
 
+fn parse_confirmation_category(text: &str) -> Result<ResidueCategory, String> {
+    match text {
+        "ai-agent" => Ok(ResidueCategory::AiAgent),
+        "ide" => Ok(ResidueCategory::Ide),
+        "developer-cache" => Ok(ResidueCategory::DeveloperCache),
+        "package-cache" => Ok(ResidueCategory::PackageCache),
+        "build-artifact" => Ok(ResidueCategory::BuildArtifact),
+        "dependency" => Ok(ResidueCategory::Dependency),
+        "log" => Ok(ResidueCategory::Log),
+        "temporary" => Ok(ResidueCategory::Temporary),
+        "session" => Ok(ResidueCategory::Session),
+        "workspace-state" => Ok(ResidueCategory::WorkspaceState),
+        "configuration" => Ok(ResidueCategory::Configuration),
+        "credential" => Ok(ResidueCategory::Credential),
+        _ => Err(
+            "confirmation category must be ai-agent, ide, developer-cache, package-cache, build-artifact, dependency, log, temporary, session, workspace-state, configuration, or credential"
+                .to_string(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use devresidue_core::RiskLevel;
+    use devresidue_core::{ResidueCategory, RiskLevel};
     use devresidue_providers::scan_store::{ScanMode, ScanSnapshot};
 
     use super::{parse_confirmations, require_ai_snapshot};
 
     #[test]
-    fn confirmation_parser_accepts_only_item_ids_and_closed_risks() {
-        let selections = parse_confirmations("501=review, 502=regenerable-local").unwrap();
+    fn confirmation_parser_requires_explicit_closed_risk_and_category() {
+        let selections = parse_confirmations(
+            "501=review:session, 502=regenerable-local:developer-cache",
+        )
+        .unwrap();
 
         assert_eq!(selections.len(), 2);
         assert_eq!(selections[0].item_id().raw(), 501);
         assert_eq!(selections[0].final_risk(), RiskLevel::Review);
+        assert_eq!(selections[0].final_category(), ResidueCategory::Session);
         assert_eq!(selections[1].item_id().raw(), 502);
         assert_eq!(selections[1].final_risk(), RiskLevel::RegenerableLocal);
+        assert_eq!(
+            selections[1].final_category(),
+            ResidueCategory::DeveloperCache
+        );
     }
 
     #[test]
@@ -433,7 +473,9 @@ mod tests {
         for text in [
             r"C:\\Users\\alice\\cache=review",
             "501=unknown",
-            "501=review,501=safe",
+            "501=review",
+            "501=review:unknown",
+            "501=review:session,501=safe:temporary",
         ] {
             assert!(parse_confirmations(text).is_err(), "must reject {text}");
         }

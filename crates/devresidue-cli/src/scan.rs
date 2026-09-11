@@ -549,6 +549,9 @@ mod tests {
     use devresidue_core::{CleanupAction, Evidence, ResidueCategory, ScanItemId, SourceKind};
     use devresidue_providers::scan_ctx::NoTool;
     use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEMP_DIR_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
     fn item(id: u64, risk: RiskLevel, size: u64) -> ScanItem {
         ScanItem {
@@ -869,7 +872,13 @@ mod tests {
     }
 
     fn tempfile_base() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("dr-cli-scan-{}", std::process::id()))
+        let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("dr-cli-scan-{}-{sequence}", std::process::id()))
+    }
+
+    #[test]
+    fn scan_test_directories_are_unique_for_parallel_execution() {
+        assert_ne!(tempfile_base(), tempfile_base());
     }
 
     #[test]

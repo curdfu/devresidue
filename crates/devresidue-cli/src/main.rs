@@ -192,7 +192,7 @@ enum AiCommand {
         #[arg(long, value_name = "IDS")]
         items: String,
         /// After showing the validated suggestions, read an explicit local
-        /// confirmation line from stdin in the form ITEM_ID=RISK,... .
+        /// confirmation line from stdin in the form ITEM_ID=RISK:CATEGORY,... .
         #[arg(long)]
         confirm: bool,
     },
