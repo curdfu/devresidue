@@ -1,7 +1,7 @@
 import { onScanGeneration } from "@/stores/scanStore";
 import { useSelectionStore } from "@/stores/selectionStore";
 import { useCleanupStore } from "@/stores/cleanupStore";
-import { useUnknownWorkflowStore } from "@/stores/unknownWorkflowStore";
+import { useAiStore } from "@/stores/aiStore";
 
 /**
  * R04 wiring: when a new snapshot generation lands (re-scan finished), every
@@ -29,15 +29,10 @@ export function wireGenerationLifecycle(): void {
       cleanup.close();
     }
 
-    // Analyzer suggestions are keyed by old ids too.
-    const unknown = useUnknownWorkflowStore.getState();
-    if (unknown.suggestions.size > 0 || unknown.analyzing.size > 0) {
-      useUnknownWorkflowStore.setState({
-        suggestions: new Map(),
-        analyzing: new Set(),
-        applying: new Set(),
-      });
-    }
+    // Remote-AI batches bind item ids to one HMAC-verified snapshot. They
+    // must never survive a generation advance, even if the numeric ids are
+    // reused by a later scan.
+    useAiStore.getState().resetForNewScan(key);
 
     // Keep the key referenced for logging symmetry with the store's notice.
     if (key < 0) {

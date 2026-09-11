@@ -107,6 +107,7 @@ pub fn upsert_disposition(
             },
             include: vec![],
             exclude: vec![],
+            provenance: None,
         },
         DispositionKind::Protect => RuleDoc {
             id: format!("user-protected/{seq}"),
@@ -123,6 +124,7 @@ pub fn upsert_disposition(
             },
             include: vec![],
             exclude: vec![],
+            provenance: None,
         },
     };
     let id = new_rule.id.clone();
@@ -140,13 +142,11 @@ pub fn upsert_disposition(
     Ok(id)
 }
 
-/// Inserts (or replaces) a *detection* rule for `target` with the given
-/// classification — used by the analyzer's "create rule" action (SPEC §26:
-/// the AI / heuristic may only *suggest*; turning a suggestion into a rule
-/// goes through this ordinary user-rule write, and the next scan's F-2-1 rule
-/// gate applies it like any user rule).
+/// Inserts (or replaces) an ordinary user-authored *detection* rule for
+/// `target` with the given classification. The next scan's F-2-1 rule gate
+/// applies it like any other user rule.
 ///
-/// The rule is `source: user` with `risk` / `category` from the suggestion.
+/// The rule is `source: user` with the requested `risk` and `category`.
 /// Returns the new rule id.
 pub fn upsert_detection_rule(
     user_dir: &Path,
@@ -171,8 +171,8 @@ pub fn upsert_detection_rule(
 
     let seq = file.rules.len() + 1;
     let rule = RuleDoc {
-        id: format!("user-analysis/{seq}"),
-        description: format!("user classification (from analyzer): {}", target.display()),
+        id: format!("user-rule/{seq}"),
+        description: format!("user classification: {}", target.display()),
         product: product.map(str::to_string),
         category,
         risk,
@@ -185,6 +185,7 @@ pub fn upsert_detection_rule(
         },
         include: vec![],
         exclude: vec![],
+        provenance: None,
     };
     let id = rule.id.clone();
     file.rules.push(rule);
@@ -196,6 +197,42 @@ pub fn upsert_detection_rule(
         .map_err(|e| format!("serialise {}: {e}", path.display()))?;
     std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(id)
+}
+
+/// Removes one user-authored rule by its exact rule id.
+///
+/// The caller never supplies a file path: this function always edits only
+/// [`dispositions_path`] beneath the application's user-rules directory. A
+/// matching rule must have `source: user` or `source: user-protected`; built-in
+/// and other sources are refused even if a malformed user file contains them.
+/// No scan target or cleanup operation is involved.
+pub fn remove_user_rule(user_dir: &Path, rule_id: &str) -> Result<(), String> {
+    if rule_id.trim().is_empty() {
+        return Err("user rule id must not be empty".to_string());
+    }
+
+    let path = dispositions_path(user_dir);
+    let mut file = read_or_empty(&path)?;
+    let matching: Vec<&RuleDoc> = file
+        .rules
+        .iter()
+        .filter(|rule| rule.id == rule_id)
+        .collect();
+    if matching.is_empty() {
+        return Err(format!("user rule `{rule_id}` was not found"));
+    }
+    if matching
+        .iter()
+        .any(|rule| !matches!(rule.source, RuleSource::User | RuleSource::UserProtected))
+    {
+        return Err(format!("rule `{rule_id}` is not a removable user rule"));
+    }
+
+    file.rules.retain(|rule| rule.id != rule_id);
+    validate_before_write(&file)?;
+    let text = serde_yaml_ng::to_string(&file)
+        .map_err(|e| format!("serialise {}: {e}", path.display()))?;
+    std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 /// Runs the loader's semantic validation on a file about to be written.
@@ -371,6 +408,50 @@ mod tests {
     }
 
     #[test]
+    fn remove_user_rule_only_removes_exact_user_owned_rule() {
+        let dir = tmp("remove-rule");
+        let user = ensure_user_rules_dir(&dir).unwrap();
+        let id = upsert_detection_rule(
+            &user,
+            Path::new(r"C:\Users\demo\.tool\cache"),
+            Some("tool"),
+            ResidueCategory::DeveloperCache,
+            RiskLevel::Safe,
+        )
+        .unwrap();
+
+        remove_user_rule(&user, &id).unwrap();
+        assert!(read_or_empty(&dispositions_path(&user))
+            .unwrap()
+            .rules
+            .is_empty());
+
+        let retained_id = upsert_detection_rule(
+            &user,
+            Path::new(r"C:\Users\demo\.tool\cache"),
+            Some("tool"),
+            ResidueCategory::DeveloperCache,
+            RiskLevel::Safe,
+        )
+        .unwrap();
+        let path = dispositions_path(&user);
+        let mut file = read_or_empty(&path).unwrap();
+        file.rules[0].id = "builtin-detection/not-user".to_string();
+        file.rules[0].source = RuleSource::BuiltinDetection;
+        fs::write(&path, serde_yaml_ng::to_string(&file).unwrap()).unwrap();
+
+        let error = remove_user_rule(&user, "builtin-detection/not-user").unwrap_err();
+        assert!(error.contains("not a removable user rule"), "{error}");
+        assert_eq!(
+            read_or_empty(&path).unwrap().rules[0].id,
+            "builtin-detection/not-user"
+        );
+        assert_ne!(retained_id, "builtin-detection/not-user");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn dangerous_root_disposition_is_refused_at_write_time() {
         // F-M4-1: a disposition targeting a drive root errors immediately —
         // not merely on the next scan's fail-closed load.
@@ -389,7 +470,7 @@ mod tests {
         // Nothing was written (the file does not exist).
         assert!(!dispositions_path(&user).exists());
 
-        // The same guard applies to the analyzer rule path.
+        // The same guard applies to an ordinary detection-rule path.
         let err = upsert_detection_rule(
             &user,
             Path::new(r"C:\"),

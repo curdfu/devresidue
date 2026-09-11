@@ -168,7 +168,7 @@ export const useScanStore = create<ScanState>((set, get) => ({
       const cancelled = snap.cancelled;
       const generation = snap.generation;
       // R04: a new generation invalidates every id-keyed UI state —
-      // selections, plans and analyzer suggestions reference ids from the
+      // selections, plans and remote AI review state reference ids from the
       // OLD generation and would silently retarget new objects otherwise.
       const advanced = prevKey !== 0 && nextKey !== prevKey;
       if (advanced) {

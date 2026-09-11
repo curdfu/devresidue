@@ -29,6 +29,7 @@
 //! journal/  cleanup journal               (Phase 6)
 //! ```
 
+pub mod ai;
 pub mod cleanup;
 pub mod domain;
 pub mod integrity;

@@ -43,7 +43,10 @@
 use serde::Deserialize;
 
 #[cfg(test)]
-use crate::contract::{ConfirmPolicyArg, DispositionArg, ScanScope};
+use crate::contract::{
+    AiConfirmResultDto, AiPreparedBatchDto, AiPreparedEntryDto, AiProfileDto, AiProfileStateDto,
+    AiSuggestionDto, ConfirmPolicyArg, DispositionArg, RiskLevelArg, ScanScope,
+};
 
 /// Every registered command, in the same order as `main.rs`'s
 /// `generate_handler!`. **Keep in sync** — `command_names_match_contract`
@@ -59,12 +62,21 @@ pub const REGISTERED_COMMANDS: &[&str] = &[
     "clear_all_data",
     "set_disposition",
     "open_folder",
-    "get_settings",
-    "set_analyzer_enabled",
-    "analyze_item",
-    "create_rule_from_suggestion",
     "get_rules",
     "validate_rules",
+    "delete_user_rule",
+    "ai_list_profiles",
+    "ai_upsert_profile",
+    "ai_delete_profile",
+    "ai_set_active_profile",
+    "ai_set_master_enabled",
+    "ai_test_connection",
+    "ai_list_models",
+    "ai_prepare_batch",
+    "ai_analyze",
+    "ai_confirm",
+    "ai_cancel",
+    "ai_discard_batch",
 ];
 
 // ---- Argument shapes mirroring what the #[tauri::command] macro generates ---
@@ -103,21 +115,6 @@ struct OpenFolderArgs {
 #[cfg(test)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AnalyzeItemArgs {
-    item_id: u64,
-}
-
-#[cfg(test)]
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CreateRuleFromSuggestionArgs {
-    item_id: u64,
-    suggested_risk: String,
-}
-
-#[cfg(test)]
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct CreateCleanupPlanArgs {
     item_ids: Vec<u64>,
     policy: ConfirmPolicyArg,
@@ -135,16 +132,51 @@ struct ExecuteCleanupPlanArgs {
 #[cfg(test)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SetAnalyzerEnabledArgs {
-    enabled: bool,
+struct GetJournalArgs {
+    #[allow(dead_code)]
+    last_n: Option<usize>,
 }
 
 #[cfg(test)]
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GetJournalArgs {
-    #[allow(dead_code)]
-    last_n: Option<usize>,
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AiConfirmArgs {
+    batch_id: String,
+    scan_generation: u64,
+    items: Vec<AiConfirmItemArgs>,
+}
+
+#[cfg(test)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AiConfirmItemArgs {
+    item_id: u64,
+    final_risk: RiskLevelArg,
+    final_category: devresidue_core::ResidueCategory,
+}
+
+#[cfg(test)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeleteUserRuleArgs {
+    rule_id: String,
+}
+
+#[cfg(test)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AiPrepareArgs {
+    profile_id: String,
+    scan_generation: u64,
+    item_ids: Vec<u64>,
+    include_paths: bool,
+}
+
+#[cfg(test)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AiDiscardBatchArgs {
+    batch_id: String,
 }
 
 #[cfg(test)]
@@ -154,7 +186,7 @@ mod tests {
         CleanupPlanDto, CleanupSessionDto, CommandError, DispositionResultDto, ErrorCode,
         JournalEntryDto, PlannedItemDto, RuleDto, RuleIssueDto, RulesValidationDto,
         ScanDonePayload, ScanErrorPayload, ScanHandleDto, SessionItemDto, SessionTotalsDto,
-        SettingsDto, SkippedItemDto, SuggestionDto,
+        SkippedItemDto,
     };
     use devresidue_providers::scan_store::{ScanMode, ScanSnapshot};
 
@@ -253,12 +285,21 @@ mod tests {
                 "clear_all_data",
                 "set_disposition",
                 "open_folder",
-                "get_settings",
-                "set_analyzer_enabled",
-                "analyze_item",
-                "create_rule_from_suggestion",
                 "get_rules",
                 "validate_rules",
+                "delete_user_rule",
+                "ai_list_profiles",
+                "ai_upsert_profile",
+                "ai_delete_profile",
+                "ai_set_active_profile",
+                "ai_set_master_enabled",
+                "ai_test_connection",
+                "ai_list_models",
+                "ai_prepare_batch",
+                "ai_analyze",
+                "ai_confirm",
+                "ai_cancel",
+                "ai_discard_batch",
             ]
         );
         // No duplicates (generate_handler! would reject them anyway).
@@ -266,6 +307,199 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), REGISTERED_COMMANDS.len());
+    }
+
+    #[test]
+    fn ai_profile_dto_has_no_api_key_or_environment_name_field() {
+        let dto = AiProfileDto {
+            id: "3fa85f64-5717-4562-b3fc-2c963f66afa6".into(),
+            name: "local test".into(),
+            base_url: "https://example.invalid/v1".into(),
+            model: "test-model".into(),
+            enabled: true,
+            is_active: true,
+        };
+        let value = serde_json::to_value(dto).unwrap();
+        let keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            vec!["baseUrl", "enabled", "id", "isActive", "model", "name"]
+        );
+        assert!(value.get("apiKey").is_none());
+        assert!(value.get("apiKeyEnv").is_none());
+    }
+
+    #[test]
+    fn ai_confirm_wire_argument_contains_only_batch_generation_ids_risks_and_categories() {
+        let parsed: AiConfirmArgs = serde_json::from_str(
+            r#"{
+                "batchId": "batch-1",
+                "scanGeneration": 7,
+                "items": [{"itemId": 12, "finalRisk": "review", "finalCategory": "developer-cache"}]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.batch_id, "batch-1");
+        assert_eq!(parsed.scan_generation, 7);
+        assert_eq!(parsed.items.len(), 1);
+        assert_eq!(parsed.items[0].item_id, 12);
+        assert_eq!(parsed.items[0].final_risk, RiskLevelArg::Review);
+        assert_eq!(
+            parsed.items[0].final_category,
+            devresidue_core::ResidueCategory::DeveloperCache
+        );
+        assert!(serde_json::from_str::<AiConfirmArgs>(
+            r#"{"batchId":"batch-1","scanGeneration":7,"items":[{"path":"C:\\\\x","finalRisk":"review","finalCategory":"developer-cache"}]}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<AiConfirmArgs>(
+            r#"{"batchId":"batch-1","scanGeneration":7,"items":[{"itemId":12,"path":"C:\\\\x","finalRisk":"review","finalCategory":"developer-cache"}]}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<AiConfirmArgs>(
+            r#"{"batchId":"batch-1","scanGeneration":7,"items":[{"itemId":12,"finalRisk":"unknown","finalCategory":"developer-cache"}]}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<AiConfirmArgs>(
+            r#"{"batchId":"batch-1","scanGeneration":7,"items":[{"itemId":12,"finalRisk":"review","finalCategory":"unknown"}]}"#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn delete_user_rule_accepts_only_an_exact_rule_id() {
+        let parsed: DeleteUserRuleArgs =
+            serde_json::from_str(r#"{"ruleId":"user-ai/7f75448b-6d89-4d8e-a861-d66b6cd1ea72"}"#)
+                .unwrap();
+        assert!(parsed.rule_id.starts_with("user-ai/"));
+        assert!(serde_json::from_str::<DeleteUserRuleArgs>(
+            r#"{"ruleId":"user-ai/test","path":"C:\\\\Users\\\\demo"}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ai_prepare_accepts_only_ids_and_an_explicit_path_disclosure_flag() {
+        let args: AiPrepareArgs = serde_json::from_str(
+            r#"{
+                "profileId": "profile-1",
+                "scanGeneration": 7,
+                "itemIds": [12, 13],
+                "includePaths": true
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(args.profile_id, "profile-1");
+        assert_eq!(args.scan_generation, 7);
+        assert_eq!(args.item_ids, vec![12, 13]);
+        assert!(args.include_paths);
+        assert!(serde_json::from_str::<AiPrepareArgs>(
+            r#"{"profileId":"profile-1","scanGeneration":7,"itemIds":[12],"includePaths":true,"path":"C:\\\\private"}"#
+        )
+        .is_err());
+
+        let discard: AiDiscardBatchArgs = serde_json::from_str(r#"{"batchId":"batch-1"}"#).unwrap();
+        assert_eq!(discard.batch_id, "batch-1");
+        assert!(serde_json::from_str::<AiDiscardBatchArgs>(
+            r#"{"batchId":"batch-1","path":"C:\\\\private"}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn remote_ai_response_dtos_have_exact_non_secret_non_path_key_sets() {
+        let profile = AiProfileDto {
+            id: "3fa85f64-5717-4562-b3fc-2c963f66afa6".into(),
+            name: "local test".into(),
+            base_url: "https://example.invalid/v1".into(),
+            model: "test-model".into(),
+            enabled: true,
+            is_active: true,
+        };
+        assert_keys(
+            &profile,
+            &["id", "name", "baseUrl", "model", "enabled", "isActive"],
+        );
+        let profiles = AiProfileStateDto {
+            master_enabled: true,
+            profiles: vec![profile],
+        };
+        assert_keys(&profiles, &["masterEnabled", "profiles"]);
+
+        let entry = AiPreparedEntryDto {
+            item_id: 12,
+            zone: "local-app-data".into(),
+            relative_depth: 2,
+            display_name: "cache".into(),
+            source_kind: "unknown-provider".into(),
+            category_hint: "unknown".into(),
+            product_hint: None,
+            size_bucket: "under-64-mi-b".into(),
+            age_bucket: "under-30-days".into(),
+            signals: vec!["path-layout".into()],
+        };
+        assert_keys(
+            &entry,
+            &[
+                "itemId",
+                "zone",
+                "relativeDepth",
+                "displayName",
+                "sourceKind",
+                "categoryHint",
+                "productHint",
+                "sizeBucket",
+                "ageBucket",
+                "signals",
+            ],
+        );
+        let batch = AiPreparedBatchDto {
+            batch_id: "batch-1".into(),
+            scan_generation: 7,
+            profile_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6".into(),
+            includes_paths: false,
+            entries: vec![entry],
+        };
+        assert_keys(
+            &batch,
+            &[
+                "batchId",
+                "scanGeneration",
+                "profileId",
+                "includesPaths",
+                "entries",
+            ],
+        );
+
+        let suggestion = AiSuggestionDto {
+            item_id: 12,
+            suggested_risk: "review".into(),
+            confidence: 0.8,
+            reason: "sanitized reason".into(),
+            product_guess: None,
+            final_risk_options: vec![RiskLevelArg::Review],
+        };
+        assert_keys(
+            &suggestion,
+            &[
+                "itemId",
+                "suggestedRisk",
+                "confidence",
+                "reason",
+                "productGuess",
+                "finalRiskOptions",
+            ],
+        );
+        let result = AiConfirmResultDto {
+            confirmed_count: 1,
+            audit_warning: false,
+        };
+        assert_keys(&result, &["confirmedCount", "auditWarning"]);
     }
 
     #[test]
@@ -310,31 +544,6 @@ mod tests {
     }
 
     #[test]
-    fn analyze_and_rule_commands_use_item_id_and_suggested_risk() {
-        // Frontend: invoke("analyze_item", { itemId: 9 })
-        let args: AnalyzeItemArgs = serde_json::from_str(r#"{ "itemId": 9 }"#).unwrap();
-        assert_eq!(args.item_id, 9);
-
-        // Frontend: invoke("create_rule_from_suggestion", { itemId: 9, suggestedRisk: "safe" })
-        let args: CreateRuleFromSuggestionArgs =
-            serde_json::from_str(r#"{ "itemId": 9, "suggestedRisk": "safe" }"#).unwrap();
-        assert_eq!(args.item_id, 9);
-        assert_eq!(args.suggested_risk, "safe");
-
-        // A risk the UI could round-trip from SuggestionDto parses.
-        assert!(parse_like(&args.suggested_risk));
-    }
-
-    /// Mirrors analyzer::parse_kebab_risk's acceptance (the value the UI sends
-    /// was produced by the backend itself, so this is a closed loop).
-    fn parse_like(text: &str) -> bool {
-        serde_json::from_value::<devresidue_core::RiskLevel>(serde_json::Value::String(
-            text.to_string(),
-        ))
-        .is_ok()
-    }
-
-    #[test]
     fn plan_and_engine_wire_args() {
         let args: CreateCleanupPlanArgs =
             serde_json::from_str(r#"{ "itemIds": [1, 2], "policy": "redownload" }"#).unwrap();
@@ -353,10 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_journal_and_folder_wire_args() {
-        let args: SetAnalyzerEnabledArgs = serde_json::from_str(r#"{ "enabled": true }"#).unwrap();
-        assert!(args.enabled);
-
+    fn journal_and_folder_wire_args() {
         let args: GetJournalArgs = serde_json::from_str(r#"{ "lastN": 5 }"#).unwrap();
         assert_eq!(args.last_n, Some(5));
         let args: GetJournalArgs = serde_json::from_str(r#"{}"#).unwrap();
@@ -364,29 +570,6 @@ mod tests {
 
         let args: OpenFolderArgs = serde_json::from_str(r#"{ "itemId": 11 }"#).unwrap();
         assert_eq!(args.item_id, 11);
-    }
-
-    #[test]
-    fn suggestion_dto_serialises_as_suggested_risk_not_risk() {
-        let dto = SuggestionDto {
-            item_id: 1,
-            product_guess: Some("rust".into()),
-            confidence: 0.6,
-            category: "build-artifact".into(),
-            suggested_risk: "regenerable-local".into(),
-            explanation: "x".into(),
-            suggested_rule_id: Some("user-analysis/rust".into()),
-            path: r"C:\x\.rustup".into(),
-        };
-        let json = serde_json::to_value(&dto).unwrap();
-        let obj = json.as_object().unwrap();
-        assert_eq!(obj["suggestedRisk"], "regenerable-local");
-        assert!(obj.contains_key("suggestedRuleId"));
-        assert!(
-            !obj.contains_key("risk"),
-            "the ambiguous `risk` key must not be emitted"
-        );
-        assert_eq!(obj["itemId"], 1);
     }
 
     // ---- F-M4-2: response DTO wire key sets (exact) ------------------------
@@ -397,33 +580,6 @@ mod tests {
     // silently. Keep the expected lists in sync with src/types/index.ts.
 
     #[test]
-    fn suggestion_dto_response_key_set_is_exact() {
-        let dto = SuggestionDto {
-            item_id: 1,
-            product_guess: None,
-            confidence: 0.6,
-            category: "unknown".into(),
-            suggested_risk: "unknown".into(),
-            explanation: "x".into(),
-            suggested_rule_id: None,
-            path: r"C:\x".into(),
-        };
-        assert_keys(
-            &dto,
-            &[
-                "itemId",
-                "productGuess",
-                "confidence",
-                "category",
-                "suggestedRisk",
-                "explanation",
-                "suggestedRuleId",
-                "path",
-            ],
-        );
-    }
-
-    #[test]
     fn disposition_result_dto_response_key_set_is_exact() {
         let dto = DispositionResultDto {
             item_id: 7,
@@ -432,14 +588,6 @@ mod tests {
             effect: "protected".into(),
         };
         assert_keys(&dto, &["itemId", "ruleId", "path", "effect"]);
-    }
-
-    #[test]
-    fn settings_dto_response_key_set_is_exact() {
-        let dto = SettingsDto {
-            analyzer_enabled: true,
-        };
-        assert_keys(&dto, &["analyzerEnabled"]);
     }
 
     #[test]

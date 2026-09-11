@@ -24,7 +24,9 @@ await build({
     contents:
       "export {useScanStore, onScanGeneration} from './src/stores/scanStore';" +
       "export {useSelectionStore} from './src/stores/selectionStore';" +
-      "export {wireGenerationLifecycle} from './src/stores/generationLifecycle';",
+      "export {wireGenerationLifecycle} from './src/stores/generationLifecycle';" +
+      "export {useAiStore} from './src/stores/aiStore';" +
+      "export {MockBackend} from './src/adapters/mockBackend';",
     resolveDir: root,
     loader: "ts",
   },
@@ -52,7 +54,13 @@ await build({
   ],
 });
 
-const { useScanStore: scan, useSelectionStore: selection, wireGenerationLifecycle } =
+const {
+  useScanStore: scan,
+  useSelectionStore: selection,
+  wireGenerationLifecycle,
+  useAiStore: aiStore,
+  MockBackend,
+} =
   await import(pathToFileURL(outfile).href);
 
 const turn = () => new Promise((r) => setImmediate(r));
@@ -65,6 +73,84 @@ const snapshot = (items, generation) => ({
   generation,
   cancelled: false,
 });
+
+// ----------------------------------------------------------- Task 10 / AI UI
+// Remote-AI state deliberately has no persist middleware. Profiles are
+// loaded through the backend but only their non-secret metadata may reach the
+// store; the password input is owned by the submit form, not Zustand.
+globalThis.__probeBackend = {
+  aiListProfiles: async () => ({
+    masterEnabled: true,
+    profiles: [
+      {
+        id: "mock-profile-1",
+        name: "测试配置",
+        baseUrl: "https://example.invalid/v1",
+        model: "fixture-model",
+        enabled: true,
+        isActive: true,
+      },
+    ],
+  }),
+  cancelAiBatch: async () => false,
+};
+await aiStore.getState().loadProfiles();
+assert.equal(aiStore.getState().profiles[0]?.apiKey, undefined, "profiles never expose an API Key");
+
+const fixtureBatch = {
+  batchId: "mock-batch-1",
+  scanGeneration: 7,
+  profileId: "mock-profile-1",
+  entries: [
+    {
+      itemId: 12,
+      zone: "user-data",
+      relativeDepth: 2,
+      displayName: "fixture-cache",
+      sourceKind: "fixture",
+      categoryHint: "unknown",
+      productHint: null,
+      sizeBucket: "100MiB-1GiB",
+      ageBucket: "30d-90d",
+      signals: ["fixture"],
+    },
+  ],
+};
+aiStore.getState().setPreparedBatch(fixtureBatch);
+assert.equal(aiStore.getState().preparedBatch?.entries.length, 1, "prepared batch is held in memory");
+
+aiStore.getState().setFinalRisk(12, "safe");
+assert.equal(aiStore.getState().requiresLowRiskWarning, true, "safe selections require a second warning");
+
+aiStore.getState().resetForNewScan(8);
+assert.equal(aiStore.getState().preparedBatch, null, "new scan clears the prepared batch");
+assert.equal(aiStore.getState().suggestions.length, 0, "new scan clears remote suggestions");
+console.log("PASS AI store: no Key persistence + batch safety lifecycle");
+
+const mockStorage = new Map();
+globalThis.localStorage = {
+  getItem: (key) => mockStorage.get(key) ?? null,
+  setItem: (key, value) => mockStorage.set(key, String(value)),
+  removeItem: (key) => mockStorage.delete(key),
+  clear: () => mockStorage.clear(),
+};
+const mockAi = new MockBackend();
+await mockAi.upsertAiProfile(
+  {
+    profileId: null,
+    name: "Mock profile",
+    baseUrl: "https://example.invalid/v1",
+    model: "fixture-model",
+    structuredOutput: "auto",
+    timeoutSecs: 30,
+    enabled: true,
+  },
+  ["one", "shot", "input"].join("-"),
+);
+const persistedMockProfiles = mockStorage.get("devresidue.ai-profiles.v1") ?? "";
+assert.equal(persistedMockProfiles.includes("one-shot-input"), false, "Mock localStorage never keeps Key input");
+assert.equal(persistedMockProfiles.includes("apiKey"), false, "Mock localStorage has no API Key field");
+console.log("PASS AI mock: localStorage contains profile metadata only");
 
 // ---------------------------------------------------------------- scenario 1
 // R04: selection must not survive a generation advance.

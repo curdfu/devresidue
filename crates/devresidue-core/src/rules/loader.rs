@@ -15,7 +15,7 @@
 //! The `user/` source directory is wired in Phase 13: it may mix `User`
 //! (detection + `user-ignore/` declarations) and `UserProtected` rules, split
 //! per rule by the collector so the single-source validator contract holds.
-//! Community / AI-suggestion directories are still **not loaded**; a YAML file
+//! Community directories are still **not loaded**; a YAML file
 //! in an unexpected directory is a hard error (fail-closed: rules must never
 //! be silently ignored).
 //!
@@ -284,6 +284,71 @@ pub fn load_rules(rules_dir: &Path, env: &dyn Fn(&str) -> Option<String>) -> Rul
     }
 
     RuleSet { rules, issues }
+}
+
+/// Compiles an in-memory list of rule documents into a ready-to-resolve
+/// [`RuleSet`], reusing the loader's own validation + compilation semantics.
+///
+/// This is the reusable candidate compile/verify helper for the AiAdvisor
+/// transaction and rematch verifier: it does **not** touch the directory-based
+/// source mapping. Every rule is validated against its *own* declared source
+/// (which is exactly what the `user/` collector's per-source grouping reduces
+/// to) and `user-ignore/` declarations are validated but never compiled, just
+/// like [`load_rules`]. Duplicate ids and any blocking issue are hard errors
+/// (`Err`), so a caller can fail closed before writing anything.
+///
+/// Numeric rule ids are assigned deterministically in declaration order
+/// (1..n), matching [`load_rules`].
+pub fn compile_rule_docs(
+    rules: &[RuleDoc],
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<RuleSet, String> {
+    // Globally unique ids (first declaration wins; a duplicate is an error).
+    let mut first_index: HashMap<&str, usize> = HashMap::new();
+    for (index, doc) in rules.iter().enumerate() {
+        if let Some(first) = first_index.insert(doc.id.as_str(), index) {
+            return Err(format!(
+                "duplicate rule id `{}` (first declared at index {}); ids must be globally unique",
+                doc.id, first
+            ));
+        }
+    }
+
+    // Validate every rule against its own declared source (the `user/`
+    // collector splits by source the same way, so a mixed user file passes).
+    for doc in rules {
+        let single = RuleFile {
+            rules: vec![doc.clone()],
+        };
+        let issues = validate_rule_file(&single, doc.source, env);
+        if let Some(issue) = issues.iter().find(|i| i.is_error()) {
+            return Err(format!(
+                "rule `{}` rejected ({}): {}",
+                doc.id,
+                issue.field.as_deref().unwrap_or("semantics"),
+                issue.message
+            ));
+        }
+    }
+
+    // Compile surviving rules in declaration order, skipping user-ignore
+    // declarations exactly like load_rules.
+    let mut compiled = Vec::new();
+    for doc in rules {
+        if doc.id.starts_with(USER_IGNORE_ID_PREFIX) {
+            continue;
+        }
+        compiled.push(compile_rule(doc, env).map_err(|e| format!("rule `{}`: {e}", doc.id))?);
+    }
+    for (index, rule) in compiled.iter_mut().enumerate() {
+        rule.order = index;
+        rule.numeric_id = RuleId::from_raw(index as u64 + 1);
+    }
+
+    Ok(RuleSet {
+        rules: compiled,
+        issues: Vec::new(),
+    })
 }
 
 /// Parses every `user/` rule file and returns the **expanded absolute anchor

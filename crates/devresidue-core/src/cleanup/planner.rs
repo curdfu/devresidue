@@ -598,6 +598,26 @@ mod tests {
     }
 
     #[test]
+    fn safe_item_enters_only_a_cleanup_plan_not_an_execution_result() {
+        let probe = FakeProbe::new();
+        let safe = item(41, RiskLevel::Safe, CleanupAction::RecycleBin);
+
+        // CleanupPlanner only produces a handle-bound description. It owns no
+        // DeletePort and cannot execute this selection; CleanupEngine remains
+        // the sole execution authority after a later confirmation/revalidate.
+        let output = planner(&probe, ConfirmPolicy::None)
+            .build(&[safe], &[crate::ScanItemId::from_raw(41)])
+            .unwrap();
+
+        assert_eq!(planned_ids(&output), vec![41]);
+        assert!(output.skipped.is_empty());
+        let planned = &output.plan.items[0];
+        assert_eq!(planned.scan_item_id.raw(), 41);
+        assert_eq!(planned.mode, crate::CleanupMode::RecycleBin);
+        assert_eq!(planned.confirmation, ConfirmRequirement::None);
+    }
+
+    #[test]
     fn none_and_defer_actions_are_skipped_with_reason() {
         let probe = FakeProbe::new();
         let all = vec![

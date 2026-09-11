@@ -13,25 +13,34 @@
 //! user.rs      user disposition persistence (Ignore / Protect, Phase 13)
 //! ```
 //!
-//! User / Community / AI-suggestion sources exist in the type system; the
-//! `user/` directory is wired to the loader in Phase 13 (Community and
-//! AI-suggestion remain unloaded by design).
+//! User / Community sources exist in the type system; the `user/` directory
+//! is wired to the loader in Phase 13 (Community remains unloaded by design).
 
+pub mod draft;
 pub mod loader;
 pub mod matcher;
 pub mod priority;
 pub mod schema;
+pub mod transaction;
 pub mod user;
 pub mod validator;
 
 // ---- Re-exports -----------------------------------------------------------
 
 pub use loader::{
-    load_rules, load_user_ignore_paths, CompiledPattern, CompiledRule, RuleSet,
+    compile_rule_docs, load_rules, load_user_ignore_paths, CompiledPattern, CompiledRule, RuleSet,
     USER_IGNORE_ID_PREFIX,
 };
 pub use matcher::{rule_matches, ExpandError};
 pub use priority::{resolve, ResolvedRule, RuleSource};
 pub use schema::{MatchSpec, RuleDoc, RuleFile};
-pub use user::{upsert_detection_rule, upsert_disposition, user_rules_dir, DispositionKind};
+pub use user::{
+    dispositions_path, remove_user_rule, upsert_detection_rule, upsert_disposition, user_rules_dir,
+    DispositionKind,
+};
 pub use validator::{validate_rule_file, RuleIssue, Severity};
+
+// ---- AI-rule drafting + atomic transaction (Task 2 / AiAdvisor Phase A) ----
+
+pub use draft::{AiRuleConfirmation, CandidateRuleVerifier, LocalRuleDraftBuilder};
+pub use transaction::{commit_ai_rule_batch, CandidateRematchVerifier};

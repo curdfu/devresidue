@@ -227,6 +227,58 @@ rules:
 }
 
 #[test]
+fn ai_confirmed_user_rule_makes_unknown_data_recyclable_after_rescan() {
+    let dir = TempDir::new();
+    let cache = dir.path().join(".my-tool-cache");
+    make_dir_with_files(&cache, &["bin/x", "cache/y", "src/z"]);
+
+    // AI confirmations are persisted as ordinary `source: user` detection
+    // rules. The rule gate must therefore also replace UnknownProvider's
+    // conservative Action::None with the local recycle-bin strategy when the
+    // user chose a cleanable final risk.
+    let user_container = dir.child("user-rules");
+    let user_dir = user_container.join("user");
+    std::fs::create_dir_all(&user_dir).unwrap();
+    devresidue_core::rules::upsert_detection_rule(
+        &user_dir,
+        &cache,
+        None,
+        devresidue_core::ResidueCategory::DeveloperCache,
+        RiskLevel::Safe,
+    )
+    .unwrap();
+
+    let rules = load_rules(&user_container, &|key: &str| {
+        let base = dir.path().to_string_lossy().into_owned();
+        match key.to_ascii_uppercase().as_str() {
+            "USERPROFILE" => Some(base.clone()),
+            "LOCALAPPDATA" => Some(format!("{base}\\Local")),
+            "APPDATA" => Some(format!("{base}\\Roaming")),
+            _ => None,
+        }
+    });
+    assert!(rules.is_clean(), "{:?}", rules.issues);
+
+    let mut context = ctx_of(profile_env(dir.path()));
+    context.set_rules(Arc::new(rules));
+    let mut items = unknown::scan(&context);
+    assert_eq!(items.len(), 1, "the exact user-rule target must be scanned");
+
+    apply_rule_classification(&context, &mut items[0]);
+
+    assert_eq!(items[0].risk, RiskLevel::Safe);
+    assert_eq!(
+        items[0].category,
+        devresidue_core::ResidueCategory::DeveloperCache
+    );
+    assert_eq!(
+        items[0].cleanup_action,
+        devresidue_core::CleanupAction::RecycleBin,
+        "a user-confirmed cleanable classification must be eligible for planning"
+    );
+}
+
+#[test]
 fn user_ignore_pre_seed_suppresses_the_path() {
     let dir = TempDir::new();
     let cache = dir.path().join(".my-noisy-cache");

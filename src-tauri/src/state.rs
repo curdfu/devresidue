@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 
 use devresidue_providers::scan_store::{self, ScanSnapshot};
 
+use crate::ai::AiSessionState;
 use crate::support;
 
 /// A running scan: its opaque handle and the cancellation flag providers poll.
@@ -38,6 +39,9 @@ pub struct AppModel {
     latest: Option<ScanSnapshot>,
     /// The currently running scan, if any (at most one at a time).
     active: Option<ActiveScan>,
+    /// Process-local remote-AI review state. It deliberately owns no API Key
+    /// and is cleared whenever a completed scan supersedes its source items.
+    pub ai: AiSessionState,
     /// Monotonic scan-id allocator.
     next_scan_id: u64,
 }
@@ -60,6 +64,7 @@ impl AppModel {
             data_dir,
             latest,
             active: None,
+            ai: AiSessionState::default(),
             next_scan_id: 0,
         }
     }
@@ -110,6 +115,7 @@ impl AppModel {
         if self.active.as_ref().is_some_and(|a| a.scan_id == scan_id) {
             self.active = None;
         }
+        self.ai.clear();
         self.latest = Some(snapshot);
     }
 
@@ -135,6 +141,7 @@ impl AppModel {
     /// intact, and `finish_scan` will re-seed `latest` when it completes.
     pub fn reset(&mut self) {
         self.latest = None;
+        self.ai.clear();
     }
 
     /// The data directory (plans/ + journal/ + last-scan.json).

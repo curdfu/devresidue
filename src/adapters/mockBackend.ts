@@ -1,6 +1,14 @@
 import type {
-  AnalyzerSuggestionDto,
-  AppSettingsDto,
+  AiConfirmItemArg,
+  AiConfirmResultDto,
+  AiFinalCategory,
+  AiFinalRisk,
+  AiPreparedBatchDto,
+  AiPreparedEntryDto,
+  AiProfileDto,
+  AiProfileInput,
+  AiProfileStateDto,
+  AiSuggestionDto,
   CleanupPlanDto,
   CleanupSessionDto,
   ConfirmPolicy,
@@ -550,6 +558,20 @@ interface Pending {
 
 type Listener<T> = (payload: T) => void;
 
+/** The mock persists only this metadata shape — never the submitted Key. */
+type StoredMockAiProfile = Omit<AiProfileDto, "isActive">;
+
+type StoredMockAiState = {
+  masterEnabled: boolean;
+  activeProfileId: string | null;
+  profiles: StoredMockAiProfile[];
+};
+
+type MockAiBatch = {
+  batch: AiPreparedBatchDto;
+  suggestions: AiSuggestionDto[];
+};
+
 /**
  * MockBackend drives the exact same event vocabulary as the Tauri layer
  * (`scan://progress|item|warning|done`, `cleanup://item`), delivered through
@@ -577,9 +599,17 @@ export class MockBackend implements Backend {
 
   /** Dispositions keyed by *path* (stable across scans, unlike item ids). */
   private dispositions = new Map<string, Disposition>();
-  /** Analyzer toggle — OFF by default (SPEC §26), persisted in localStorage. */
-  private analyzerEnabled = false;
-  private loadedSettings = false;
+  private persistedLoaded = false;
+
+  // Remote-AI mock state is process-local except the non-secret profile
+  // metadata written by persistAiProfiles(). No API Key field exists here.
+  private aiMasterEnabled = false;
+  private aiProfiles: StoredMockAiProfile[] = [];
+  private activeAiProfileId: string | null = null;
+  private aiBatches = new Map<string, MockAiBatch>();
+  private deletedRuleIds = new Set<string>();
+  private activeAiBatchId: string | null = null;
+  private nextAiBatchId = 1;
 
   constructor() {
     this.loadPersisted();
@@ -587,8 +617,8 @@ export class MockBackend implements Backend {
   }
 
   private loadPersisted() {
-    if (this.loadedSettings) return;
-    this.loadedSettings = true;
+    if (this.persistedLoaded) return;
+    this.persistedLoaded = true;
     try {
       const raw = localStorage.getItem("devresidue.dispositions.v1");
       if (raw) {
@@ -600,15 +630,21 @@ export class MockBackend implements Backend {
           else if (d === ("protected" as Disposition)) this.dispositions.set(path, "protect");
         }
       }
-      const rawSettings = localStorage.getItem("devresidue.settings.backend.v1");
-      if (rawSettings) {
-        const parsed = JSON.parse(rawSettings) as { analyzerEnabled?: boolean };
-        if (typeof parsed.analyzerEnabled === "boolean") {
-          this.analyzerEnabled = parsed.analyzerEnabled;
+      const rawAi = localStorage.getItem("devresidue.ai-profiles.v1");
+      if (rawAi) {
+        const parsed = JSON.parse(rawAi) as Partial<StoredMockAiState>;
+        if (typeof parsed.masterEnabled === "boolean") {
+          this.aiMasterEnabled = parsed.masterEnabled;
+        }
+        if (typeof parsed.activeProfileId === "string" || parsed.activeProfileId === null) {
+          this.activeAiProfileId = parsed.activeProfileId;
+        }
+        if (Array.isArray(parsed.profiles)) {
+          this.aiProfiles = parsed.profiles.flatMap(readStoredMockAiProfile);
         }
       }
     } catch {
-      // Corrupt store: fall back to defaults (analyzer off).
+      // Corrupt persisted state: fall back to in-memory defaults.
     }
   }
 
@@ -622,14 +658,23 @@ export class MockBackend implements Backend {
     }
   }
 
-  private persistSettings() {
+  /** Deliberately serializes a non-secret allowlist rather than request input. */
+  private persistAiProfiles() {
     try {
-      localStorage.setItem(
-        "devresidue.settings.backend.v1",
-        JSON.stringify({ analyzerEnabled: this.analyzerEnabled }),
-      );
+      const payload: StoredMockAiState = {
+        masterEnabled: this.aiMasterEnabled,
+        activeProfileId: this.activeAiProfileId,
+        profiles: this.aiProfiles.map((profile) => ({
+          id: profile.id,
+          name: profile.name,
+          baseUrl: profile.baseUrl,
+          model: profile.model,
+          enabled: profile.enabled,
+        })),
+      };
+      localStorage.setItem("devresidue.ai-profiles.v1", JSON.stringify(payload));
     } catch {
-      // Storage unavailable: session-only.
+      // Storage unavailable: metadata stays session-only; no Key fallback.
     }
   }
 
@@ -1225,98 +1270,258 @@ export class MockBackend implements Backend {
     };
   }
 
-  async getSettings(): Promise<AppSettingsDto> {
+  async listAiProfiles(): Promise<AiProfileStateDto> {
     this.loadPersisted();
-    return { analyzerEnabled: this.analyzerEnabled };
+    return this.aiProfileState();
   }
 
-  async setAnalyzerEnabled(enabled: boolean): Promise<void> {
-    this.analyzerEnabled = enabled;
-    this.persistSettings();
-  }
-
-  async analyzeItem(itemId: number): Promise<AnalyzerSuggestionDto> {
-    if (!this.analyzerEnabled) {
-      throw toCommandError({
-        code: "analyzer-disabled",
-        message: "directory analyzer is disabled — enable it in Settings",
-      });
-    }
-    const snap = await this.getScanResults();
-    const it = snap.items.find((i) => i.id === itemId);
-    if (!it) {
-      throw toCommandError({
-        code: "invalid-item",
-        message: `item id ${itemId} does not belong to the latest scan`,
-      });
+  async upsertAiProfile(input: AiProfileInput, apiKey: string): Promise<AiProfileDto> {
+    // The mock intentionally has no Key store. Keeping this explicit makes a
+    // browser-dev implementation unable to drift into localStorage leakage.
+    void apiKey;
+    const name = input.name.trim();
+    const baseUrl = input.baseUrl.trim();
+    const model = input.model.trim();
+    if (!name || !baseUrl || !model || !Number.isSafeInteger(input.timeoutSecs) || input.timeoutSecs < 1) {
+      throw aiMockError("ai-not-configured", "远程 AI 配置不完整");
     }
 
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    await sleep(700 + Math.random() * 500);
-
-    // Deterministic per-path suggestion so the demo tells one coherent story.
-    const guess = analyzerGuess(it.path);
-    return {
-      itemId,
-      productGuess: guess.product,
-      // Wire contract: confidence is 0..=1 (rendered as % in the UI).
-      confidence: guess.confidence / 100,
-      category: guess.category,
-      // Wire field name mirrors the real backend's SuggestionDto exactly
-      // (Rust `suggested_risk` → camelCase `suggestedRisk`) — a mock that
-      // drifts from the wire shape masks contract breaks in browser dev.
-      suggestedRisk: guess.risk,
-      explanation: guess.explanation,
-      suggestedRuleId: `analyzer-suggestion/${slugOf(it.path)}`,
-      path: it.path,
+    const id = input.profileId ?? `mock-ai-${Date.now()}-${this.aiProfiles.length + 1}`;
+    const profile: StoredMockAiProfile = {
+      id,
+      name,
+      baseUrl,
+      model,
+      enabled: input.enabled,
     };
+    const index = this.aiProfiles.findIndex((candidate) => candidate.id === id);
+    if (index >= 0) this.aiProfiles[index] = profile;
+    else this.aiProfiles.push(profile);
+    if (this.activeAiProfileId === null) this.activeAiProfileId = id;
+    this.clearAiBatches();
+    this.persistAiProfiles();
+    return this.profileDto(profile);
   }
 
-  async createRuleFromSuggestion(
-    itemId: number,
-    suggestedRisk: string,
-  ): Promise<DispositionResultDto> {
-    const snap = await this.getScanResults();
-    const it = snap.items.find((i) => i.id === itemId);
-    if (!it) {
-      throw toCommandError({
-        code: "invalid-item",
-        message: `item id ${itemId} does not belong to the latest scan`,
-      });
+  async deleteAiProfile(profileId: string): Promise<void> {
+    const before = this.aiProfiles.length;
+    this.aiProfiles = this.aiProfiles.filter((profile) => profile.id !== profileId);
+    if (this.aiProfiles.length === before) {
+      throw aiMockError("ai-not-configured", "远程 AI 配置不可用");
     }
-    if (it.risk !== "unknown") {
+    if (this.activeAiProfileId === profileId) this.activeAiProfileId = null;
+    this.clearAiBatches();
+    this.persistAiProfiles();
+  }
+
+  async setActiveAiProfile(profileId: string | null): Promise<AiProfileStateDto> {
+    if (profileId !== null && !this.aiProfiles.some((profile) => profile.id === profileId)) {
+      throw aiMockError("ai-not-configured", "远程 AI 配置不可用");
+    }
+    this.activeAiProfileId = profileId;
+    this.clearAiBatches();
+    this.persistAiProfiles();
+    return this.aiProfileState();
+  }
+
+  async setAiMasterEnabled(enabled: boolean): Promise<AiProfileStateDto> {
+    this.aiMasterEnabled = enabled;
+    if (!enabled) this.clearAiBatches();
+    this.persistAiProfiles();
+    return this.aiProfileState();
+  }
+
+  async testAiConnection(profileId: string): Promise<void> {
+    this.requireReadyAiProfile(profileId);
+    // Fixture-only success: this intentionally performs no fetch and sees no
+    // scan item, profile Key or request payload.
+  }
+
+  async listAiModels(profileId: string): Promise<string[]> {
+    const profile = this.aiProfiles.find((candidate) => candidate.id === profileId);
+    if (!profile || !profile.enabled) {
+      throw aiMockError("ai-not-configured", "远程 AI 配置不可用");
+    }
+    // Fixture-only deterministic discovery. Like the real backend this does
+    // not depend on the analysis master switch and receives no scan metadata.
+    return ["gpt-4.1-mini", "gpt-5.6-luna", "gpt-5.6-sol"];
+  }
+
+  async prepareAiBatch(
+    profileId: string,
+    scanGeneration: number,
+    itemIds: number[],
+    includePaths: boolean,
+  ): Promise<AiPreparedBatchDto> {
+    this.requireReadyAiProfile(profileId);
+    const snapshot = await this.getScanResults();
+    if (snapshot.generation !== scanGeneration) {
+      throw aiMockError("ai-batch-expired", "远程 AI 批次不再匹配当前扫描");
+    }
+    if (itemIds.length === 0 || new Set(itemIds).size !== itemIds.length) {
+      throw toCommandError({ code: "invalid-item", message: "请选择不重复的可研判条目" });
+    }
+    const byId = new Map(snapshot.items.map((item) => [item.id, item]));
+    const selected = itemIds.map((id) => byId.get(id));
+    if (
+      selected.some(
+        (item) => item === undefined || (item.risk !== "unknown" && item.risk !== "review"),
+      )
+    ) {
       throw toCommandError({
         code: "invalid-item",
-        message: "suggestions apply to unknown-risk items only",
+        message: "仅 Unknown 或 Review 条目可进入远程 AI 研判",
       });
     }
 
-    // Same persisted-rule path as set_disposition, but the risk comes from
-    // the analyzer's suggestion (not the fixed ignore/protect pair).
-    const risk = normalizeRisk(suggestedRisk);
-    this.dispositions.set(it.path, "protect");
-    this.persistDispositions();
-    this.applyDispositionToSnapshot(itemId, risk, "rule");
-
-    return {
-      itemId,
-      ruleId: `user-rule/${slugOf(it.path)}`,
-      path: it.path,
-      effect: `rule created with suggested risk “${risk}”; future scans list it as ${risk}`,
+    const entries = selected.map((item) => preparedMockEntry(item!));
+    const batch: AiPreparedBatchDto = {
+      batchId: `mock-ai-batch-${this.nextAiBatchId++}`,
+      scanGeneration,
+      profileId,
+      includesPaths: includePaths,
+      entries,
     };
+    this.aiBatches.set(batch.batchId, {
+      batch,
+      suggestions: entries.map(mockAiSuggestion),
+    });
+    return batch;
+  }
+
+  async analyzeAiBatch(batchId: string): Promise<AiSuggestionDto[]> {
+    const batch = this.aiBatches.get(batchId);
+    if (!batch) throw aiMockError("ai-batch-expired", "远程 AI 批次不再匹配当前扫描");
+    if (this.activeAiBatchId !== null && this.activeAiBatchId !== batchId) {
+      throw aiMockError("ai-batch-in-progress", "已有远程 AI 研判正在进行");
+    }
+    this.activeAiBatchId = batchId;
+    try {
+      // This is deliberately a deterministic local fixture, not a simulated
+      // remote service. It proves review UI behavior without sending data.
+      return batch.suggestions.map((suggestion) => ({ ...suggestion }));
+    } finally {
+      this.activeAiBatchId = null;
+    }
+  }
+
+  async confirmAiBatch(
+    batchId: string,
+    scanGeneration: number,
+    items: AiConfirmItemArg[],
+  ): Promise<AiConfirmResultDto> {
+    const stored = this.aiBatches.get(batchId);
+    if (!stored || stored.batch.scanGeneration !== scanGeneration) {
+      throw aiMockError("ai-batch-expired", "远程 AI 批次不再匹配当前扫描");
+    }
+    if (items.length === 0 || new Set(items.map((item) => item.itemId)).size !== items.length) {
+      throw toCommandError({ code: "invalid-item", message: "请选择不重复的建议后再确认" });
+    }
+    const eligible = new Set(stored.suggestions.map((suggestion) => suggestion.itemId));
+    if (items.some((item) =>
+      !eligible.has(item.itemId)
+      || !isAiFinalRisk(item.finalRisk)
+      || !isAiFinalCategory(item.finalCategory),
+    )) {
+      throw toCommandError({ code: "invalid-item", message: "确认内容不属于当前远程 AI 批次" });
+    }
+
+    const latest = await this.getScanResults();
+    if (latest.generation !== scanGeneration) {
+      throw aiMockError("ai-batch-expired", "远程 AI 批次不再匹配当前扫描");
+    }
+    const finalRisks = new Map(items.map((item) => [item.itemId, item.finalRisk]));
+    const finalCategories = new Map(items.map((item) => [item.itemId, item.finalCategory]));
+    this.snapshot = {
+      ...latest,
+      items: latest.items.map((item) => {
+        const finalRisk = finalRisks.get(item.id);
+        const finalCategory = finalCategories.get(item.id);
+        if (!finalRisk || !finalCategory) return item;
+        return {
+          ...item,
+          risk: finalRisk,
+          category: finalCategory,
+          // Like the real Core transaction, mock confirmation classifies but
+          // never builds or executes a cleanup plan.
+          cleanup_action: { kind: "none" as const },
+          explanation: "由你审阅远程 AI 建议后创建的本地分类规则。",
+          evidence: [
+            ...item.evidence,
+            { rule_id: null, source: "ai-advisor", detail: "user-confirmed fixture classification" },
+          ],
+        };
+      }),
+    };
+    this.aiBatches.delete(batchId);
+    return { confirmedCount: items.length, auditWarning: false };
+  }
+
+  async cancelAiBatch(batchId: string): Promise<boolean> {
+    if (this.activeAiBatchId !== batchId) return false;
+    this.activeAiBatchId = null;
+    return true;
+  }
+
+  async discardAiBatch(batchId: string): Promise<boolean> {
+    if (this.activeAiBatchId === batchId || !this.aiBatches.has(batchId)) return false;
+    this.aiBatches.delete(batchId);
+    return true;
   }
 
   async getRules(): Promise<RuleDto[]> {
     // Demo set (data/rules.ts) — the Rules page badges it as mock data.
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     await sleep(120);
-    return mockRuleDtos();
+    return mockRuleDtos().filter((rule) => !this.deletedRuleIds.has(rule.ruleId));
   }
 
   async validateRules(): Promise<RulesValidationDto> {
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     await sleep(180);
     return mockRulesValidation();
+  }
+
+  async deleteUserRule(ruleId: string): Promise<void> {
+    const rule = mockRuleDtos().find((candidate) => candidate.ruleId === ruleId);
+    if (!rule || (rule.source !== "user" && rule.source !== "user-protected")) {
+      throw toCommandError({ code: "engine", message: "仅可删除用户新建的规则" });
+    }
+    this.deletedRuleIds.add(ruleId);
+  }
+
+  private aiProfileState(): AiProfileStateDto {
+    return {
+      masterEnabled: this.aiMasterEnabled,
+      profiles: this.aiProfiles.map((profile) => this.profileDto(profile)),
+    };
+  }
+
+  private profileDto(profile: StoredMockAiProfile): AiProfileDto {
+    return {
+      id: profile.id,
+      name: profile.name,
+      baseUrl: profile.baseUrl,
+      model: profile.model,
+      enabled: profile.enabled,
+      isActive: profile.id === this.activeAiProfileId,
+    };
+  }
+
+  private requireReadyAiProfile(profileId: string): StoredMockAiProfile {
+    if (!this.aiMasterEnabled) {
+      throw aiMockError("ai-disabled", "远程 AI 已关闭");
+    }
+    const profile = this.aiProfiles.find((candidate) => candidate.id === profileId);
+    if (!profile || !profile.enabled || this.activeAiProfileId !== profileId) {
+      throw aiMockError("ai-not-configured", "远程 AI 配置不可用");
+    }
+    return profile;
+  }
+
+  private clearAiBatches(): void {
+    this.activeAiBatchId = null;
+    this.aiBatches.clear();
   }
 
   /** Removes an ignored item from the live snapshot (mirrors the next scan). */
@@ -1342,7 +1547,7 @@ export class MockBackend implements Backend {
     if (risk === "unknown") return;
     const detail =
       evidenceKind === "rule"
-        ? `classified via accepted analyzer suggestion (risk: ${risk})`
+        ? `classified via accepted remote AI review (risk: ${risk})`
         : risk === "protected"
           ? "protected via Unknown page disposition"
           : `classified via disposition (risk: ${risk})`;
@@ -1371,6 +1576,119 @@ export class MockBackend implements Backend {
   }
 }
 
+/** Strictly projects persisted mock metadata, discarding unknown fields. */
+function readStoredMockAiProfile(value: unknown): StoredMockAiProfile[] {
+  if (typeof value !== "object" || value === null) return [];
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.name !== "string" ||
+    typeof candidate.baseUrl !== "string" ||
+    typeof candidate.model !== "string" ||
+    typeof candidate.enabled !== "boolean"
+  ) {
+    return [];
+  }
+  return [
+    {
+      id: candidate.id,
+      name: candidate.name,
+      baseUrl: candidate.baseUrl,
+      model: candidate.model,
+      enabled: candidate.enabled,
+    },
+  ];
+}
+
+function aiMockError(
+  code: "ai-disabled" | "ai-not-configured" | "ai-batch-in-progress" | "ai-batch-expired",
+  message: string,
+) {
+  return toCommandError({ code, message });
+}
+
+/** Maps a fixture item to the same path-free consent vocabulary as Tauri. */
+function preparedMockEntry(item: ScanItemDto): AiPreparedEntryDto {
+  const ageDays = item.last_modified === null ? null : (now() - item.last_modified) / DAY;
+  return {
+    itemId: item.id,
+    zone: "user-data",
+    relativeDepth: 2,
+    displayName: item.display_name,
+    sourceKind: item.source,
+    categoryHint: item.category,
+    productHint: item.product,
+    sizeBucket: sizeBucket(item.logical_size),
+    ageBucket: ageBucket(ageDays),
+    signals: ["local-fixture", item.risk === "review" ? "review-risk" : "unknown-risk"],
+  };
+}
+
+/** Deterministic local fixture, intentionally independent of item.path. */
+function mockAiSuggestion(entry: AiPreparedEntryDto): AiSuggestionDto {
+  const suggestedRisk: AiFinalRisk =
+    entry.categoryHint === "session" || entry.signals.includes("review-risk") ? "review" : "safe";
+  return {
+    itemId: entry.itemId,
+    suggestedRisk,
+    confidence: suggestedRisk === "review" ? 0.68 : 0.61,
+    reason:
+      suggestedRisk === "review"
+        ? "演示夹具：会话或既有 Review 信号需保守处理，请逐项决定最终风险。"
+        : "演示夹具：仅根据已展示的脱敏元数据给出低置信度建议，请逐项决定最终风险。",
+    productGuess: entry.productHint,
+    finalRiskOptions: [
+      "safe",
+      "regenerable-local",
+      "regenerable-download",
+      "review",
+      "protected",
+    ],
+  };
+}
+
+function isAiFinalRisk(value: string): value is AiFinalRisk {
+  return (
+    value === "safe" ||
+    value === "regenerable-local" ||
+    value === "regenerable-download" ||
+    value === "review" ||
+    value === "protected"
+  );
+}
+
+function isAiFinalCategory(value: string): value is AiFinalCategory {
+  return value !== "unknown" && [
+    "ai-agent",
+    "ide",
+    "developer-cache",
+    "package-cache",
+    "build-artifact",
+    "dependency",
+    "log",
+    "temporary",
+    "session",
+    "workspace-state",
+    "configuration",
+    "credential",
+  ].includes(value);
+}
+
+function sizeBucket(size: number): string {
+  if (size < MiB) return "under-1MiB";
+  if (size < 100 * MiB) return "1MiB-100MiB";
+  if (size < GiB) return "100MiB-1GiB";
+  return "over-1GiB";
+}
+
+function ageBucket(days: number | null): string {
+  if (days === null) return "unknown";
+  if (days < 7) return "under-7d";
+  if (days < 30) return "7d-30d";
+  if (days < 90) return "30d-90d";
+  return "over-90d";
+}
+
 /** Slug form of a Windows path for demo rule ids. */
 function slugOf(path: string): string {
   return path
@@ -1378,19 +1696,6 @@ function slugOf(path: string): string {
     .replace(/[\\/]+/g, "-")
     .replace(/[^a-z0-9-]/g, "")
     .replace(/^-+|-+$/g, "");
-}
-
-/** Clamps an arbitrary wire risk label to a known one. */
-function normalizeRisk(risk: string): RiskLevel {
-  const known: RiskLevel[] = [
-    "safe",
-    "regenerable-local",
-    "regenerable-download",
-    "review",
-    "protected",
-    "unknown",
-  ];
-  return (known as string[]).includes(risk) ? (risk as RiskLevel) : "unknown";
 }
 
 /** A plausible category for a re-classified item. */
@@ -1409,64 +1714,4 @@ function riskCategory(risk: RiskLevel): ScanItemDto["category"] {
     case "unknown":
       return "unknown";
   }
-}
-
-/** Metadata-only guess table for the mock analyzer. */
-function analyzerGuess(path: string): {
-  product: string;
-  /** 0-100 (converted to the wire's 0..=1 before returning). */
-  confidence: number;
-  risk: RiskLevel;
-  category: string;
-  explanation: string;
-} {
-  const name = path.toLowerCase();
-  if (name.includes("qagent")) {
-    return {
-      product: "QAgent CLI",
-      confidence: 74,
-      risk: "review",
-      category: "session",
-      explanation:
-        "Directory name and a sessions/ sub-layout match a small-agent CLI pattern; it probably holds conversation state. Suggested review rather than safe.",
-    };
-  }
-  if (name.includes("tigerproxy")) {
-    return {
-      product: "TigerProxy",
-      confidence: 61,
-      risk: "safe",
-      category: "temporary",
-      explanation:
-        "Tool state untouched for six months with a lock-file layout typical of a proxy's scratch dir. Likely regenerable, but the vendor is unverified.",
-    };
-  }
-  if (name.includes("rustdesktool")) {
-    return {
-      product: "RustDeskTool",
-      confidence: 68,
-      risk: "review",
-      category: "session",
-      explanation:
-        "Session-store layout (many small .json files, recent writes) resembles agent session history. Treat as review until confirmed.",
-    };
-  }
-  if (name.includes("build-cache")) {
-    return {
-      product: "Unknown build tool",
-      confidence: 82,
-      risk: "regenerable-local",
-      category: "build-artifact",
-      explanation:
-        "Content-addressed blob layout under Temp is characteristic of a build cache; deleting costs only recompilation. Confidence is high on the class, low on the owner.",
-    };
-  }
-  return {
-    product: "some-tool",
-    confidence: 55,
-    risk: "review",
-    category: "unknown",
-    explanation:
-      "AppData layout with no distinguishing markers. Default suggestion is review — not enough metadata for anything stronger.",
-  };
 }

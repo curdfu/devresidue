@@ -45,7 +45,7 @@ use crate::rules::matcher::{
     compile_glob, expand_env, first_meta_offset, normalize_slashes, rel_under_root,
 };
 use crate::rules::priority::RuleSource;
-use crate::rules::schema::RuleFile;
+use crate::rules::schema::{RuleDoc, RuleFile};
 use crate::safety::canonical;
 use crate::RiskLevel;
 
@@ -326,8 +326,68 @@ pub(crate) fn validate_rule_file_with_seed(
                  they have no effect with match.exact",
             ));
         }
+
+        // 6. Optional AiAdvisor provenance semantics (Phase A). Unknown YAML
+        //    provenance fields and free-text suggestion ids are already
+        //    rejected at the serde parse layer (RuleProvenance is
+        //    deny_unknown_fields and suggestion_id is an AiSuggestionId); this
+        //    layer rejects the semantic residue (provenance on a non-user
+        //    rule, user_final_risk not matching rule risk, negative time).
+        if let Some(provenance) = &rule.provenance {
+            check_provenance(rule, provenance, &mut issues);
+        }
     }
     issues
+}
+
+/// Validates the semantic content of an optional AI provenance block against
+/// the whole rule it is attached to.
+///
+/// Structural guarantees already enforced by the types at the parse layer:
+/// canonical profile/suggestion UUIDs, `origin: ai-advisor` (single-variant
+/// enum) and a nonnegative `u64` scan generation. This function rejects the
+/// residual semantic problems: provenance on a rule the user does not own, a
+/// `user_final_risk` that disagrees with the rule's risk, and a negative
+/// creation time.
+fn check_provenance(
+    rule: &RuleDoc,
+    provenance: &crate::ai::RuleProvenance,
+    issues: &mut Vec<RuleIssue>,
+) {
+    let rule_id = rule.id.as_str();
+
+    // Provenance records a user's review decision, so it may only ride on a
+    // rule the user owns. Built-in, community, and detection sources are
+    // never AI-review products.
+    if !matches!(rule.source, RuleSource::User | RuleSource::UserProtected) {
+        issues.push(RuleIssue::error(
+            rule_id,
+            "provenance",
+            "provenance is only permitted on user rules (source: user or user-protected); \
+             built-in/community/detection rules cannot carry AI provenance",
+        ));
+    }
+
+    // The recorded final risk must be exactly the risk the rule now assigns,
+    // so the provenance cannot be made to disagree with the persisted rule.
+    if provenance.user_final_risk != rule.risk {
+        issues.push(RuleIssue::error(
+            rule_id,
+            "provenance.user_final_risk",
+            format!(
+                "provenance.user_final_risk `{:?}` must equal the rule risk `{:?}`",
+                provenance.user_final_risk, rule.risk
+            ),
+        ));
+    }
+
+    if provenance.created_at_epoch_secs < 0 {
+        issues.push(RuleIssue::error(
+            rule_id,
+            "provenance.created_at_epoch_secs",
+            "provenance.created_at_epoch_secs must be a nonnegative epoch-seconds timestamp",
+        ));
+    }
 }
 
 /// Checks one anchor pattern: expansion, lexical normalisation, INV-006 root
@@ -738,6 +798,7 @@ fn is_share_root(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::{AiProfileId, AiSuggestionId, RuleOrigin, RuleProvenance};
     use crate::rules::schema::{MatchSpec, RuleDoc};
     use crate::{ResidueCategory, RiskLevel};
     use std::collections::BTreeMap;
@@ -761,6 +822,7 @@ mod tests {
             match_spec: spec,
             include: Vec::new(),
             exclude: Vec::new(),
+            provenance: None,
         }
     }
 
@@ -1482,5 +1544,112 @@ mod tests {
         assert!(sweep.is_match(&child));
         let deep = compile_glob("C:/Users/demo/**").expect("glob");
         assert!(deep.is_match(&grandchild));
+    }
+
+    // ---- optional provenance semantic validation (AiAdvisor Phase A) -------
+    //
+    // Unknown provenance YAML fields and free-text suggestion ids are rejected
+    // at the serde parse layer (RuleProvenance is deny_unknown_fields and
+    // suggestion_id is an AiSuggestionId). This layer rejects the semantic
+    // residue: provenance on a non-user rule, user_final_risk not matching the
+    // rule risk, and a negative creation time.
+
+    const PROVENANCE_CANON: &str = "018f7e21-9d15-7b17-a5fd-4f0f2bcadc72";
+    const SUGGESTION_CANON: &str = "9f3c7d21-1a2b-4c5d-8e6f-0a1b2c3d4e5f";
+
+    fn valid_provenance() -> RuleProvenance {
+        RuleProvenance {
+            origin: RuleOrigin::AiAdvisor,
+            profile_id: AiProfileId::parse(PROVENANCE_CANON).unwrap(),
+            scan_generation: 7,
+            suggestion_id: AiSuggestionId::parse(SUGGESTION_CANON).unwrap(),
+            user_final_risk: RiskLevel::Safe,
+            created_at_epoch_secs: 1_760_000_000,
+        }
+    }
+
+    fn with_provenance(mut rule: RuleDoc, provenance: RuleProvenance) -> RuleDoc {
+        rule.provenance = Some(provenance);
+        rule
+    }
+
+    fn provenance_error_messages(rule: RuleDoc) -> Vec<String> {
+        let issues = validate_one(rule);
+        issues
+            .iter()
+            .filter(|i| i.field.as_deref().is_some_and(|f| f.starts_with("provenance")))
+            .map(|i| i.message.clone())
+            .collect()
+    }
+
+    /// A valid *user* rule (source User) that provenance may legally attach to.
+    fn provenance_rule() -> RuleDoc {
+        doc(
+            "t",
+            RiskLevel::Safe,
+            RuleSource::User,
+            exact("C:/x"),
+        )
+    }
+
+    #[test]
+    fn valid_provenance_is_accepted_by_the_validator() {
+        let errors = provenance_error_messages(with_provenance(provenance_rule(), valid_provenance()));
+        assert!(errors.is_empty(), "unexpected provenance errors: {errors:?}");
+    }
+
+    #[test]
+    fn provenance_rejected_on_non_user_source() {
+        // Fix-round 1: provenance is only meaningful on a rule the user owns
+        // (source User / UserProtected). A detection rule carrying provenance
+        // must be rejected.
+        let provenance = valid_provenance();
+        let rule = with_provenance(
+            doc(
+                "t",
+                RiskLevel::Safe,
+                RuleSource::BuiltinDetection,
+                exact("C:/x"),
+            ),
+            provenance,
+        );
+        let msgs = provenance_error_messages(rule);
+        assert!(
+            msgs.iter().any(|m| m.contains("source")),
+            "provenance on a non-user rule must be rejected, got {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn provenance_rejects_risk_mismatch() {
+        // Fix-round 1: provenance.user_final_risk must equal the rule's risk.
+        let provenance = valid_provenance(); // user_final_risk = Safe
+        let rule = with_provenance(
+            doc(
+                "t",
+                RiskLevel::Protected,
+                RuleSource::User,
+                exact("C:/x"),
+            ),
+            provenance,
+        );
+        let msgs = provenance_error_messages(rule);
+        assert!(
+            msgs.iter().any(|m| m.contains("user_final_risk")),
+            "provenance.user_final_risk must equal rule risk, got {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn provenance_rejects_negative_creation_time() {
+        let mut provenance = valid_provenance();
+        provenance.created_at_epoch_secs = -1;
+        let errors = provenance_error_messages(with_provenance(provenance_rule(), provenance));
+        assert!(
+            errors
+                .iter()
+                .any(|m| m.contains("created_at_epoch_secs")),
+            "negative created_at_epoch_secs must be rejected, got {errors:?}"
+        );
     }
 }

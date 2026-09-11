@@ -4,6 +4,7 @@ import { ScanBar } from "./ScanBar";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { CategoryPage } from "@/pages/CategoryPage";
 import { UnknownPage } from "@/pages/UnknownPage";
+import { AiReviewPage } from "@/pages/AiReviewPage";
 import { RulesPage } from "@/pages/RulesPage";
 import { JournalPage } from "@/pages/JournalPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -70,6 +71,7 @@ export function AppShell() {
           />
         )}
         {page === "unknown" && <UnknownPage />}
+        {page === "ai-review" && <AiReviewPage />}
         {page === "risk-results" && <RiskResultsPage />}
         {page === "rules" && <RulesPage />}
         {page === "journal" && <JournalPage />}

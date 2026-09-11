@@ -10,8 +10,6 @@
 //! dev_cache/  developer cache providers first batch (Phase 8: npm/bun/pip/uv/cargo/nuget)
 //! agents/     AI agent data providers        (Phase 9)
 //! unknown/    unknown developer data provider (Phase 13, SPEC §25)
-//! analyze/    metadata-only directory analyzer (Phase 14, default off, SPEC §26)
-//! settings.rs settings persistence (analyzer gate)
 //! package/    reserved: package-store discovery (future)
 //! fixtures.rs built-in fixture provider used by CLI acceptance/demo
 //! measure.rs  shared safe tree measurement (no symlink/junction descent)
@@ -21,7 +19,6 @@
 //! ```
 
 pub mod agents;
-pub mod analyze;
 pub mod classify;
 pub mod dev_cache;
 pub mod fixtures;
@@ -31,7 +28,6 @@ pub mod project;
 pub mod registry;
 pub mod scan_ctx;
 pub mod scan_store;
-pub mod settings;
 pub mod unknown;
 
 use devresidue_core::ScanItem;

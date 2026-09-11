@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import type { ScanItemDto } from "@/types";
 import { useScanStore } from "@/stores/scanStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -6,19 +6,20 @@ import { useUnknownWorkflowStore } from "@/stores/unknownWorkflowStore";
 import { formatBytes } from "@/utils/format";
 import { ResultsTable } from "@/components/ResultsTable";
 import { DetailPanel } from "@/components/DetailPanel";
-import { SuggestionCard } from "@/components/UnknownActions";
 import { EmptyScanState } from "@/components/common";
 /**
  * Unknown Developer Data (SPEC §25 / PLAN Phase 13).
  *
  * Zero selection surface: no checkbox column, no cleanup dock — UNKNOWN
- * items can only be opened, ignored, protected, analyzed or ruled. The
+ * items can only be opened, ignored, protected, or submitted for explicit
+ * remote AI review. The
  * disposition work happens in the Detail Panel per item.
  */
 export function UnknownPage() {
   const items = useScanStore((s) => s.items);
   const phase = useScanStore((s) => s.phase);
   const detailItemId = useUiStore((s) => s.detailItemId);
+  const setPage = useUiStore((s) => s.setPage);
   const setRiskFilter = useUiStore((s) => s.setRiskFilter);
   const riskFilter = useUiStore((s) => s.riskFilter);
   const error = useUnknownWorkflowStore((s) => s.error);
@@ -47,11 +48,16 @@ export function UnknownPage() {
               形似开发工具数据但无规则识别的文件夹——永不自动删除，需逐个人工决定
             </div>
           </div>
-          {riskFilter === "unknown" && (
-            <button className="btn small ghost" onClick={() => setRiskFilter(null)}>
-              来自概览 ✕
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+            <button className="btn small primary" onClick={() => setPage("ai-review")}>
+              <Sparkles size={13} /> AI 研判
             </button>
-          )}
+            {riskFilter === "unknown" && (
+              <button className="btn small ghost" onClick={() => setRiskFilter(null)}>
+                来自概览 ✕
+              </button>
+            )}
+          </div>
         </div>
 
         {error && (
@@ -88,7 +94,6 @@ export function UnknownPage() {
 
       {detail && (
         <aside className="detail">
-          <SuggestionCard item={detail} />
           <DetailPanel item={detail} unknownMode />
         </aside>
       )}

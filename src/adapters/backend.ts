@@ -1,6 +1,11 @@
 import type {
-  AnalyzerSuggestionDto,
-  AppSettingsDto,
+  AiConfirmItemArg,
+  AiConfirmResultDto,
+  AiPreparedBatchDto,
+  AiProfileDto,
+  AiProfileInput,
+  AiProfileStateDto,
+  AiSuggestionDto,
   CleanupPlanDto,
   CleanupSessionDto,
   CommandError,
@@ -48,7 +53,7 @@ export interface Backend {
    */
   clearAllData(): Promise<number>;
 
-  // ---- M4: unknown dispositions / settings / analyzer (aligned) ----------
+  // ---- M4: Unknown dispositions (aligned) ---------------------------------
   //
   // Wire shape (contract.rs): all three id-referenced commands take a flat
   // `itemId` argument; `set_disposition` additionally takes the kebab-case
@@ -58,19 +63,36 @@ export interface Backend {
   openFolder(itemId: number): Promise<void>;
   /** Persists an ignore/protect decision for an Unknown item as a user rule. */
   setDisposition(itemId: number, disposition: Disposition): Promise<DispositionResultDto>;
-  /** Reads the app settings (analyzer toggle etc.). */
-  getSettings(): Promise<AppSettingsDto>;
-  /** Flips the AI analyzer switch (default off, SPEC §26). Returns void. */
-  setAnalyzerEnabled(enabled: boolean): Promise<void>;
-  /** Runs metadata-only analysis on one Unknown item (suggestions only). */
-  analyzeItem(itemId: number): Promise<AnalyzerSuggestionDto>;
-  /**
-   * Turns an accepted suggestion into a user rule carrying the suggested
-   * risk (backend command `create_rule_from_suggestion`; registered
-   * separately from set_disposition because the risk comes from the
-   * analyzer's proposal, not the fixed ignore/protect pair).
-   */
-  createRuleFromSuggestion(itemId: number, suggestedRisk: string): Promise<DispositionResultDto>;
+  // ---- Remote AI Advisor (Task 10; metadata-only / ID-only) -------------
+
+  /** Returns profile metadata and the remote-AI master gate; never a Key. */
+  listAiProfiles(): Promise<AiProfileStateDto>;
+  /** `apiKey` is one-shot input and must not be retained by callers. */
+  upsertAiProfile(input: AiProfileInput, apiKey: string): Promise<AiProfileDto>;
+  deleteAiProfile(profileId: string): Promise<void>;
+  setActiveAiProfile(profileId: string | null): Promise<AiProfileStateDto>;
+  setAiMasterEnabled(enabled: boolean): Promise<AiProfileStateDto>;
+  /** Minimal connectivity only; sends no scan metadata or prompt. */
+  testAiConnection(profileId: string): Promise<void>;
+  /** Lists only safe model IDs from one saved profile; sends no scan metadata. */
+  listAiModels(profileId: string): Promise<string[]>;
+  /** Prepares a consent preview for Unknown/Review item ids in one generation. */
+  prepareAiBatch(
+    profileId: string,
+    scanGeneration: number,
+    itemIds: number[],
+    includePaths: boolean,
+  ): Promise<AiPreparedBatchDto>;
+  analyzeAiBatch(batchId: string): Promise<AiSuggestionDto[]>;
+  /** Confirmation carries only batch/generation/item id/final risk/category. */
+  confirmAiBatch(
+    batchId: string,
+    scanGeneration: number,
+    items: AiConfirmItemArg[],
+  ): Promise<AiConfirmResultDto>;
+  cancelAiBatch(batchId: string): Promise<boolean>;
+  /** Discards a prepared non-running batch so candidates can be reselected. */
+  discardAiBatch(batchId: string): Promise<boolean>;
 
   // ---- R11: real rules API ----------------------------------------------
 
@@ -78,6 +100,8 @@ export interface Backend {
   getRules(): Promise<RuleDto[]>;
   /** Load-time validation results for the rule set. */
   validateRules(): Promise<RulesValidationDto>;
+  /** Removes one user-owned rule by exact rule ID; never accepts a path. */
+  deleteUserRule(ruleId: string): Promise<void>;
 }
 
 /** Turns a raw invoke rejection into the typed `CommandError` shape. */

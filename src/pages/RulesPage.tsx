@@ -6,7 +6,7 @@ import { RiskBadge } from "@/components/common";
 import { BACKEND_KIND } from "@/App";
 
 /**
- * Rules registry (read-only). R11: loads the *actual* merged rule set from
+ * Rules registry. R11: loads the *actual* merged rule set from
  * the backend (`get_rules` + `validate_rules`) instead of a hardcoded demo
  * table. In mock mode a visible "demo data" badge marks that the table is
  * not the real machine's rule set (review requirement).
@@ -17,6 +17,7 @@ export function RulesPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
 
   const reload = async () => {
     setLoading(true);
@@ -55,6 +56,29 @@ export function RulesPage() {
     );
   }, [rules, query]);
 
+  const deleteRule = async (rule: RuleDto) => {
+    const isProtected = rule.source === "user-protected";
+    const message = isProtected
+      ? `删除保护规则“${rule.ruleId}”后，下次扫描将不再由该规则保护对应位置。是否继续？`
+      : `删除用户规则“${rule.ruleId}”？下次扫描将不再应用此分类。`;
+    if (!window.confirm(message)) return;
+
+    setDeletingRuleId(rule.ruleId);
+    setError(null);
+    try {
+      await getBackend().deleteUserRule(rule.ruleId);
+      await reload();
+    } catch (raw) {
+      const message =
+        typeof raw === "object" && raw !== null && "message" in raw
+          ? String((raw as { message: unknown }).message)
+          : String(raw);
+      setError(message);
+    } finally {
+      setDeletingRuleId(null);
+    }
+  };
+
   /** Issues per rule id (joined from the validation aggregate). */
   const issuesByRule = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -83,7 +107,7 @@ export function RulesPage() {
         <div>
           <div className="page-title">规则</div>
           <div className="page-sub">
-            后端实际加载的合并规则集（只读）——每个扫描条目都会引用为它分类的规则
+            后端实际加载的合并规则集——可删除用户新建规则；每个扫描条目都会引用为它分类的规则
           </div>
         </div>
         <div className="scanbar" style={{ marginLeft: "auto" }}>
@@ -164,6 +188,7 @@ export function RulesPage() {
                   <th>风险</th>
                   <th>类别</th>
                   <th>校验</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -217,6 +242,20 @@ export function RulesPage() {
                           </span>
                         )}
                       </td>
+                      <td>
+                        {(r.source === "user" || r.source === "user-protected") ? (
+                          <button
+                            className="btn small ghost"
+                            disabled={deletingRuleId !== null}
+                            onClick={() => void deleteRule(r)}
+                            title={r.source === "user-protected" ? "删除用户保护规则" : "删除用户规则"}
+                          >
+                            {deletingRuleId === r.ruleId ? "删除中…" : "删除"}
+                          </button>
+                        ) : (
+                          <span className="badge plain">不可删除</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -231,7 +270,7 @@ export function RulesPage() {
 
           <p style={{ color: "var(--text-mute)", fontSize: 12, display: "flex", gap: 8 }}>
             <CheckCircle2 size={13} style={{ marginTop: 1, flex: "none" }} />
-            在未知数据页创建的用户规则会显示在这里；内置受保护规则集永不可被覆盖（SPEC §14）。
+            用户规则可在此删除；内置受保护规则集永不可被覆盖（SPEC §14）。删除后请重新扫描以查看新的分类结果。
           </p>
         </div>
       </div>

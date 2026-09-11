@@ -23,8 +23,6 @@ pub enum SourceKind {
     /// Produced by the unknown developer data provider (Phase 13). Heuristic
     /// discovery only — every hit is `Unknown` risk and never auto-deleted.
     UnknownProvider,
-    /// Produced by the optional AI analyzer (Phase 14). Suggestions only.
-    AiAnalysis,
 }
 
 #[cfg(test)]
@@ -43,7 +41,6 @@ mod tests {
             (SourceKind::PackageManager, "package-manager"),
             (SourceKind::AgentProvider, "agent-provider"),
             (SourceKind::UnknownProvider, "unknown-provider"),
-            (SourceKind::AiAnalysis, "ai-analysis"),
         ];
         for (variant, token) in cases {
             let json = serde_json::to_string(&variant).unwrap();

@@ -303,7 +303,7 @@ pub enum SourceKind {
     DeveloperCacheProvider,
     PackageManager,
     AgentProvider,
-    AiAnalysis,
+    UnknownProvider,
 }
 ```
 
@@ -700,6 +700,8 @@ Built-in Detection Rules
 AI Suggestion
 ```
 
+远程 AI Suggestion 不是可执行规则，也不会在扫描、计划或清理阶段改变任何删除资格。只有用户逐项复核后，才可由本地闭合风险枚举、规则校验器与原子规则事务把选中的建议写成普通 `User Rules`；因此最终仍受上述 `User Rules` 优先级、保护规则和安全校验约束。AI 服务本身没有规则写入权。
+
 ---
 
 # 15. Safety Validator
@@ -1009,41 +1011,18 @@ private key
 Open Folder
 Ignore
 Protect
-Create Rule
-AI Analyze
+联网 AI 研判（显式提交）
 ```
 
 ---
 
-# 26. AI Analyzer
+# 26. 可选远程 AI Advisor
 
-默认关闭。
+远程 Advisor 默认全局禁用，按 Profile 配置 endpoint、model、结构化输出模式与超时。只有用户确认提交选中的 `UNKNOWN` / `REVIEW` 候选批次后，才会发送经白名单和脱敏处理的元数据；默认不含原始路径、证据、文件内容、源码、credential、token、私有文档、SSH key 与认证文件内容。用户可在每个批次单独勾选“发送完整本地路径”：此时路径仅能由已验证的当前扫描快照按 `ScanItemId` 在本地派生，预览必须展示，且路径不写入 Profile、审计、AI DTO 或远程响应。UI/CLI 绝不接收任意 Path 参数。每个条目以批次内随机 token 标识，远程响应也只能引用该 token。
 
-输入优先只有：
+Profile 元数据不包含 API Key。API Key 使用由 Profile UUID 派生的用户级环境变量 `DEVRESIDUE_AI_KEY_<UPPERCASE_UUID>` 保存，并只在当前进程内读取和使用；这不是凭据隔离边界，同一 Windows 用户下可读取用户环境变量的进程同样可能读取该值。Profile 的创建、更新、删除与恢复使用本地事务；删除 Profile 会移除其派生 Key，但不会删除已确认的用户规则。
 
-```text
-目录名
-文件名
-扩展名
-大小
-时间戳
-目录树
-manifest metadata
-process association
-```
-
-默认禁止发送：
-
-```text
-源码
-credential
-token
-私有文档
-SSH key
-auth file 内容
-```
-
-AI 只可输出建议，不能删除。
+远程响应先在本地验证 token、风险枚举、置信度和结构，随后仅作为进程内建议展示。用户必须逐项给出最终风险；`UNKNOWN` 不能作为确认结果。只有本地验证和原子规则事务都成功时，才会创建 `User Rules`，冲突或失败时整批不写入。AI 本身没有删除、创建 CleanupPlan、执行 CleanupPlan、覆盖 `PROTECTED` 或直接写规则的权威；任何后续清理仍必须由 CleanupPlanner、确认流程和 CleanupEngine 按既有安全不变量处理。
 
 ---
 

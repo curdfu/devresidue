@@ -64,23 +64,50 @@ class TauriBackendLazy implements Backend {
   async setDisposition(...args: Parameters<Backend["setDisposition"]>) {
     return (await this.real()).setDisposition(...args);
   }
-  async getSettings(...args: Parameters<Backend["getSettings"]>) {
-    return (await this.real()).getSettings(...args);
+  async listAiProfiles(...args: Parameters<Backend["listAiProfiles"]>) {
+    return (await this.real()).listAiProfiles(...args);
   }
-  async setAnalyzerEnabled(...args: Parameters<Backend["setAnalyzerEnabled"]>) {
-    return (await this.real()).setAnalyzerEnabled(...args);
+  async upsertAiProfile(...args: Parameters<Backend["upsertAiProfile"]>) {
+    return (await this.real()).upsertAiProfile(...args);
   }
-  async analyzeItem(...args: Parameters<Backend["analyzeItem"]>) {
-    return (await this.real()).analyzeItem(...args);
+  async deleteAiProfile(...args: Parameters<Backend["deleteAiProfile"]>) {
+    return (await this.real()).deleteAiProfile(...args);
   }
-  async createRuleFromSuggestion(...args: Parameters<Backend["createRuleFromSuggestion"]>) {
-    return (await this.real()).createRuleFromSuggestion(...args);
+  async setActiveAiProfile(...args: Parameters<Backend["setActiveAiProfile"]>) {
+    return (await this.real()).setActiveAiProfile(...args);
+  }
+  async setAiMasterEnabled(...args: Parameters<Backend["setAiMasterEnabled"]>) {
+    return (await this.real()).setAiMasterEnabled(...args);
+  }
+  async testAiConnection(...args: Parameters<Backend["testAiConnection"]>) {
+    return (await this.real()).testAiConnection(...args);
+  }
+  async listAiModels(...args: Parameters<Backend["listAiModels"]>) {
+    return (await this.real()).listAiModels(...args);
+  }
+  async prepareAiBatch(...args: Parameters<Backend["prepareAiBatch"]>) {
+    return (await this.real()).prepareAiBatch(...args);
+  }
+  async analyzeAiBatch(...args: Parameters<Backend["analyzeAiBatch"]>) {
+    return (await this.real()).analyzeAiBatch(...args);
+  }
+  async confirmAiBatch(...args: Parameters<Backend["confirmAiBatch"]>) {
+    return (await this.real()).confirmAiBatch(...args);
+  }
+  async cancelAiBatch(...args: Parameters<Backend["cancelAiBatch"]>) {
+    return (await this.real()).cancelAiBatch(...args);
+  }
+  async discardAiBatch(...args: Parameters<Backend["discardAiBatch"]>) {
+    return (await this.real()).discardAiBatch(...args);
   }
   async getRules(...args: Parameters<Backend["getRules"]>) {
     return (await this.real()).getRules(...args);
   }
   async validateRules(...args: Parameters<Backend["validateRules"]>) {
     return (await this.real()).validateRules(...args);
+  }
+  async deleteUserRule(...args: Parameters<Backend["deleteUserRule"]>) {
+    return (await this.real()).deleteUserRule(...args);
   }
 }
 

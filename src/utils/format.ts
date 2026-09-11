@@ -126,7 +126,6 @@ export function sourceLabel(source: string): string {
     "developer-cache-provider": "开发缓存 Provider",
     "package-manager": "包管理器",
     "agent-provider": "Agent Provider",
-    "ai-analysis": "AI 分析",
   };
   return map[source] ?? source;
 }

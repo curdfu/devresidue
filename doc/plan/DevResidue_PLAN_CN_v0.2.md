@@ -113,7 +113,7 @@ Settings
 
 ```text
 Unknown Developer Data
-AI Analyzer
+可选远程 AI Advisor
 Community Rules
 ```
 
@@ -279,7 +279,6 @@ Exists
 builtin
 community
 user
-ai-suggestion
 ```
 
 优先级严格按 SPEC。
@@ -764,43 +763,38 @@ Protect
 Create Rule
 ```
 
-AI 暂不启用。
+远程 AI Advisor 暂不启用。
 
 ---
 
-# 17. Phase 14：AI Analyzer
+# 17. Phase 14：可选远程 AI Advisor
 
-Core 完成后再加入。
+可选远程 AI Advisor 已实现，作为 OpenAI-compatible Profile 服务：
 
-接口：
+- 默认全局禁用；Profile 记录非敏感 endpoint、model、结构化输出模式、超时与启用状态；
+- 每个 Profile 的 API Key 使用派生的用户环境变量保存，CLI 只从 stdin 接收 Key；Profile 元数据与审计不写入 Key；
+- 仅用户显式提交的 `UNKNOWN` / `REVIEW` 候选批次会出站，输入是随机 token 与经白名单、脱敏的元数据；默认不含原始路径、证据、文件内容或凭据。用户可在单个批次明确勾选完整路径披露，路径只能由当前已验证扫描按 `ScanItemId` 派生、必须在预览中展示、不会写入 DTO/Profile/审计，UI/CLI 仍不接收任意 Path；
+- 远程建议仅在当前进程的批次缓存中存在。用户逐项复核并提供最终风险后，本地校验器与原子用户规则事务才可创建 `User Rules`；`UNKNOWN`、批次失效、规则冲突或事务失败均不写入部分规则；
+- Profile 删除会清理该 Profile 的派生 Key，但不会影响已确认的用户规则。
 
-```rust
-trait DirectoryAnalyzer
-```
-
-输入仅 metadata。
-
-输出：
-
-```text
-product guess
-confidence
-classification suggestion
-suggested rule
-```
-
-AI 无权：
+远程 AI 无权：
 
 ```text
 删除
-执行 CleanupPlan
+创建或执行 CleanupPlan
 覆盖 Protected
+直接写入规则
 直接启用危险规则
 ```
 
 ## 验收
 
-AI 完全关闭时程序功能不受影响。
+- AI 完全关闭时程序功能不受影响；
+- UI、CLI 都只按 `ScanItemId` 选择最新已验证真实扫描中的候选项，远程接口不接收任意 Path、CleanupPlan 或规则文本；
+- 路径披露默认关闭；启用时只允许当前批次的快照派生路径进入远程请求，返回重选会销毁未发送的进程内批次，不改变扫描、规则或清理状态；
+- `PROTECTED` 项不会进入远程批次；远程建议不改变 `UNKNOWN` / `PROTECTED` 的自动清理限制；
+- 401/无效响应、取消、扫描代际变化和确认冲突都不缓存可用建议、不创建规则或删除数据；
+- 任何删除仍只经 CleanupEngine 在后续计划与重新验证后执行。
 
 ---
 
@@ -981,7 +975,6 @@ Journal
 暂缓：
 
 ```text
-AI Analyzer
 Community Rules
 Unknown 自动发现
 大量 IDE

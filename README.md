@@ -35,7 +35,7 @@ DevResidue 将这些来源统一为扫描项，并通过规则、风险等级、
 - 通过 YAML 规则对扫描项进行分类，并支持列出和校验规则；
 - 基于最近一次扫描创建持久化清理计划，支持按扫描项选择或选择可安全清理项；
 - 执行前预览（`--dry-run`）、分级确认、清理日志与最近扫描快照；
-- 对未知项提供忽略、保护和元数据分析建议；
+- 对未知项提供忽略、保护，以及默认关闭的可选远程 AI Advisor；
 - 提供 Rust 原生 CLI，以及基于 Tauri v2、React 和 TypeScript 的桌面界面外壳。
 
 ### 仍在建设中
@@ -57,6 +57,33 @@ DevResidue 的清理流程以“先识别、再计划、后执行”为原则：
 - 每次清理会写入日志，便于追溯操作结果。
 
 无论使用何种工具，删除本地数据都可能带来不可逆后果。请始终先检查扫描结果、清理计划和 dry-run 输出，并确认重要数据已有备份。
+
+## 可选远程 AI Advisor
+
+远程 AI Advisor 默认关闭，支持 OpenAI-compatible endpoint 的 Profile。它不是清理功能：只对用户明确提交的一批符合条件的 `UNKNOWN` / `REVIEW` 扫描项给出分类建议，不创建清理计划、不删除数据，也不能覆盖 `PROTECTED`。原始路径、文件内容、证据和凭据不会发送；请求只包含脱敏、白名单化的元数据和随机条目 token。
+
+每条建议都必须由用户复核。确认时只接受当前真实扫描中的 `ScanItemId` 和受限风险值，随后由本地校验器与原子事务创建用户规则；这仍不会触发清理。建议只保留在当前进程，扫描或 Profile 改变后会失效。
+
+API Key 仅通过 `--key-stdin` 从标准输入读取，保存为每个 Profile 自动派生的用户级环境变量；它不会写进 Profile JSON、审计日志或命令行参数。用户环境变量不是跨进程隔离机制：同一 Windows 用户下可读取该环境变量的进程同样可能访问该值。
+
+```powershell
+# 创建 Profile；API Key 只通过 stdin 传入，不放在命令行参数中
+Get-Content -Raw .\api-key.txt | devresidue ai profile create --name LocalGateway --base-url https://gateway.example/v1 --model model-name --key-stdin
+
+# 使用创建命令输出的 ID 选择 Profile，再显式启用远程 Advisor
+devresidue ai profile select <PROFILE_ID>
+devresidue ai enable
+devresidue ai status
+
+# 先运行真实扫描；不带 --confirm 时只显示临时建议，不写规则
+devresidue scan
+devresidue ai analyze --items 12,18
+
+# 带 --confirm 时仍需在 stdin 中逐项输入 ITEM_ID=RISK；只会创建本地用户规则
+devresidue ai analyze --items 12,18 --confirm
+```
+
+使用 `devresidue ai profile list` 查看非敏感配置；使用 `devresidue ai disable` 停用远程 Advisor。发生中断事务时，可使用 `devresidue ai recovery status` 查看恢复状态。删除 Profile 会删除它的派生 Key，但不会删除已经确认的用户规则。
 
 ## 架构概览
 
@@ -211,7 +238,8 @@ devresidue clean --safe
 | `devresidue journal [--last <N>]` | 查看近期清理日志。 |
 | `devresidue unknown ignore <ITEM_ID>` | 将未知项写入忽略规则。 |
 | `devresidue unknown protect <ITEM_ID>` | 将未知项写入保护规则。 |
-| `devresidue analyze <ITEM_ID>` | 对一个扫描项运行默认关闭的元数据分析。 |
+| `devresidue ai status` | 查看远程 AI Advisor 的非敏感配置与恢复状态。 |
+| `devresidue ai analyze --items <IDS> [--confirm]` | 对最新真实扫描中显式选择的候选项请求临时建议；确认后仅写入本地用户规则。 |
 
 使用 `devresidue <command> --help` 查看完整参数说明。
 
@@ -230,6 +258,8 @@ devresidue clean --safe
 | `DEVRESIDUE_DATA_DIR` | 覆盖运行时数据目录。 |
 | `DEVRESIDUE_RULES_DIR` | 指定额外的用户规则目录。 |
 | `DEVRESIDUE_WORKSPACE_ROOTS` | 指定项目扫描的工作区根目录。 |
+
+远程 AI Profile 的 Key 使用自动派生的 `DEVRESIDUE_AI_KEY_<UPPERCASE_UUID>` 用户级环境变量保存，不应手动加入配置文件或日志。Profile 的非敏感元数据保存在运行时数据目录中。
 
 内置规则位于 [`resources/rules`](resources/rules)，采用 YAML 格式；使用 `devresidue rules validate` 可在修改后验证规则。
 

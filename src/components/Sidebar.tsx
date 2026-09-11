@@ -53,6 +53,7 @@ export function Sidebar() {
       devcache: 0,
       projects: 0,
       unknown: 0,
+      "ai-review": 0,
       dashboard: 0,
       "risk-results": 0,
       rules: 0,

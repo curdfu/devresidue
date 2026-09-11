@@ -1,0 +1,21 @@
+[package]
+name = "devresidue-ai"
+description = "Offline privacy sanitizer for DevResidue AI metadata batches"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+devresidue-core = { path = "../devresidue-core" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "native-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "~1.20", features = ["v4", "serde"] }
+
+[dev-dependencies]
+devresidue-platform-windows = { path = "../devresidue-platform-windows" }
+
+[lints.rust]
+unsafe_code = "forbid"

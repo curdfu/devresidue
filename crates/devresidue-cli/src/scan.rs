@@ -540,7 +540,6 @@ fn source_label(source: devresidue_core::SourceKind) -> &'static str {
         devresidue_core::SourceKind::PackageManager => "Tool Query",
         devresidue_core::SourceKind::AgentProvider => "Agent",
         devresidue_core::SourceKind::UnknownProvider => "Unknown",
-        devresidue_core::SourceKind::AiAnalysis => "AI",
     }
 }
 

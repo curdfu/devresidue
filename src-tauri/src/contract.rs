@@ -162,7 +162,7 @@ pub struct JournalEntryDto {
     pub error: Option<String>,
 }
 
-// ---- Unknown / Analyzer / Settings DTOs (Phase 13/14) ----------------------
+// ---- Unknown dispositions DTOs (Phase 13) -----------------------------------
 
 /// User disposition for one scan item (SPEC §25 actions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,27 +185,103 @@ pub struct DispositionResultDto {
     pub effect: String,
 }
 
-/// Analyzer suggestion for one item (SPEC §26, no deletion authority).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SuggestionDto {
-    pub item_id: u64,
-    pub product_guess: Option<String>,
-    /// 0..=1.
-    pub confidence: f32,
-    pub category: String,
-    /// Suggested risk the item would carry if the user accepts (kebab-case).
-    pub suggested_risk: String,
-    pub explanation: String,
-    pub suggested_rule_id: Option<String>,
-    pub path: String,
+// ---- Remote-AI DTOs (no secret / no path) ---------------------------------
+
+/// Closed structured-output preference accepted when a remote-AI profile is
+/// created or updated. The profile response deliberately omits this and every
+/// secret-adjacent field; the frontend keeps the submitted preference only for
+/// the one-shot edit request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StructuredOutputModeArg {
+    Auto,
+    JsonSchema,
+    JsonObject,
 }
 
-/// Application settings (the analyzer gate).
+/// The only final risks the remote-AI confirmation surface accepts. `Unknown`
+/// is intentionally absent: a user must choose a concrete local disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RiskLevelArg {
+    Safe,
+    RegenerableLocal,
+    RegenerableDownload,
+    Review,
+    Protected,
+}
+
+/// A stored remote-AI profile as it may cross IPC. Neither the API key nor the
+/// generated environment-variable name is part of this type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SettingsDto {
-    pub analyzer_enabled: bool,
+pub struct AiProfileDto {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub model: String,
+    pub enabled: bool,
+    pub is_active: bool,
+}
+
+/// Non-secret remote-AI profile state for the settings UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProfileStateDto {
+    pub master_enabled: bool,
+    pub profiles: Vec<AiProfileDto>,
+}
+
+/// One sanitized entry shown for explicit metadata-send consent. `item_id` is
+/// the sole local identity; the in-memory entry token never crosses IPC.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiPreparedEntryDto {
+    pub item_id: u64,
+    pub zone: String,
+    pub relative_depth: u8,
+    pub display_name: String,
+    pub source_kind: String,
+    pub category_hint: String,
+    pub product_hint: Option<String>,
+    pub size_bucket: String,
+    pub age_bucket: String,
+    pub signals: Vec<String>,
+}
+
+/// A process-local batch preview. The opaque batch id is usable only until a
+/// scan/profile/session transition invalidates the in-memory state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiPreparedBatchDto {
+    pub batch_id: String,
+    pub scan_generation: u64,
+    pub profile_id: String,
+    /// Whether this batch will include full snapshot-derived paths in the
+    /// remote request. The paths themselves never cross IPC.
+    pub includes_paths: bool,
+    pub entries: Vec<AiPreparedEntryDto>,
+}
+
+/// Validated remote suggestion rendered without the model's opaque entry
+/// token, raw request or raw response. The final-risk choices are closed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSuggestionDto {
+    pub item_id: u64,
+    pub suggested_risk: String,
+    pub confidence: f32,
+    pub reason: String,
+    pub product_guess: Option<String>,
+    pub final_risk_options: Vec<RiskLevelArg>,
+}
+
+/// Summary of a successful all-or-nothing local confirmation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConfirmResultDto {
+    pub confirmed_count: usize,
+    pub audit_warning: bool,
 }
 
 // ---- Errors ----------------------------------------------------------------
@@ -224,8 +300,16 @@ pub enum ErrorCode {
     PartialScan,
     /// A referenced scan-item id does not belong to the latest scan.
     InvalidItem,
-    /// The directory analyzer is disabled (SPEC §26, default off).
-    AnalyzerDisabled,
+    /// Remote AI is disabled by its separate master switch.
+    AiDisabled,
+    /// The selected profile or its process-local Key is not ready.
+    AiNotConfigured,
+    /// A remote request for another batch is already in progress.
+    AiBatchInProgress,
+    /// The requested batch no longer belongs to the current real scan.
+    AiBatchExpired,
+    /// A sanitized remote-AI request, validation or local confirmation failed.
+    AiRequestFailed,
     /// Any other engine/planner/store failure.
     Engine,
 }

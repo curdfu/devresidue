@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { useUiStore, systemTheme } from "@/stores/uiStore";
 import { useScanStore } from "@/stores/scanStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useAppSettingsStore } from "@/stores/appSettingsStore";
 import { backendKind } from "@/stores/settingsStore";
 import { wireGenerationLifecycle } from "@/stores/generationLifecycle";
 import { AppShell } from "@/components/AppShell";
@@ -12,7 +11,6 @@ export function App() {
   const theme = useUiStore((s) => s.theme);
   const loadLatest = useScanStore((s) => s.loadLatest);
   const loadSettings = useSettingsStore((s) => s.load);
-  const loadAppSettings = useAppSettingsStore((s) => s.load);
 
   // Theme attribute on <html> drives all CSS custom properties. "system"
   // resolves against the OS preference and FOLLOWS it live (no reload needed
@@ -36,13 +34,11 @@ export function App() {
     wireGenerationLifecycle();
   }, []);
 
-  // Restore persisted settings (roots + analyzer toggle) and the last scan
-  // snapshot (if any).
+  // Restore persisted roots and the last scan snapshot (if any).
   useEffect(() => {
     loadSettings();
-    void loadAppSettings();
     void loadLatest();
-  }, [loadSettings, loadAppSettings, loadLatest]);
+  }, [loadSettings, loadLatest]);
 
   return (
     <>

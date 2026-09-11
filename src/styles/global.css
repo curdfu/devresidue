@@ -1468,6 +1468,14 @@ table.rules td.wrap {
   gap: 8px;
 }
 
+/* Dedicated Unknown-data subpage for the explicit remote-AI review flow.
+   The page body is deliberately the only vertical scroll surface. */
+.ai-review-panel {
+  width: min(100%, 1060px);
+  margin: 0 auto;
+  flex: none;
+}
+
 .settings-card h3 {
   font-family: var(--font-display);
   font-size: 13px;
@@ -1590,7 +1598,7 @@ table.rules td.wrap {
 }
 
 /* ============================================================
-   M4: Unknown page / analyzer / journal
+   M4: Unknown page / remote AI Advisor / journal
    ============================================================ */
 
 /* nav count chip (data pages): item count, no dot */
@@ -1632,7 +1640,7 @@ table.rules td.wrap {
   font-family: var(--font-mono);
 }
 
-.analyzer-hint {
+.ai-advisor-hint {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1640,9 +1648,15 @@ table.rules td.wrap {
   color: var(--text-mute);
   line-height: 1.4;
 }
-.analyzer-hint svg {
+.ai-advisor-hint svg {
   flex: none;
   color: var(--text-faint);
+}
+
+.ai-review-suggestion-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .mono-path {
@@ -1654,146 +1668,6 @@ table.rules td.wrap {
   border-radius: 5px;
   padding: 6px 10px;
   overflow-wrap: anywhere;
-}
-
-/* ---- Suggestion card (a proposal, never a fact) ---------------- */
-
-.suggestion-card {
-  margin: 12px 16px 0;
-  border: 1px dashed color-mix(in srgb, var(--risk-download) 55%, transparent);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--risk-download) 5%, var(--bg-panel));
-  padding: 11px 13px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  animation: rise 240ms ease both;
-}
-
-.suggestion-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.suggestion-head svg {
-  color: var(--risk-download);
-  flex: none;
-}
-
-.suggestion-title {
-  font-family: var(--font-display);
-  font-size: 11px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--text-soft);
-}
-
-.suggested-tag {
-  font-style: italic;
-  font-size: 10.5px;
-  color: var(--risk-download);
-  border: 1px dashed color-mix(in srgb, var(--risk-download) 45%, transparent);
-  border-radius: 4px;
-  padding: 0 5px;
-  margin-left: 4px;
-}
-
-.suggestion-head .detail-close {
-  margin-left: auto;
-  padding: 2px;
-}
-
-.suggestion-grid {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr 1fr 1fr;
-  gap: 8px;
-}
-
-.sg .k {
-  font-size: 9.5px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.sg .v {
-  font-size: 12.5px;
-  color: var(--text);
-  margin-top: 2px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.sg .v i {
-  font-style: italic;
-  color: var(--text-soft);
-}
-
-.conf-bar {
-  display: block;
-  width: 100%;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--bg-active);
-  overflow: hidden;
-  margin-top: 4px;
-}
-.conf-bar i {
-  display: block;
-  height: 100%;
-  background: var(--risk-download);
-}
-
-.suggestion-text {
-  font-size: 12px;
-  color: var(--text-soft);
-  line-height: 1.5;
-}
-
-.suggestion-rule {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  border-top: 1px dashed var(--border);
-  padding-top: 9px;
-}
-
-.suggestion-rule .k {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.suggestion-rule .mono {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-mute);
-  overflow-wrap: anywhere;
-}
-
-.suggestion-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
-
-.suggestion-foot .hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-mute);
-}
-.suggestion-foot .hint svg {
-  flex: none;
-  color: var(--risk-review);
 }
 
 /* ---- Journal table ---------------------------------------------- */
@@ -1815,9 +1689,9 @@ table.rules.journal-table td.num {
   color: var(--text-mute);
 }
 
-/* ---- Settings: analyzer toggle ---------------------------------- */
+/* ---- Settings: remote AI Advisor toggle -------------------------- */
 
-.analyzer-toggle-row {
+.ai-advisor-toggle-row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2043,11 +1917,6 @@ table.results {
   overflow-wrap: anywhere;
 }
 
-.suggestion-rule .mono {
-  word-break: break-all;
-  white-space: normal;
-}
-
 /* ---- Dashboard: cards wrap; breakdown rows flex --------------------------- */
 
 .dash {
@@ -2238,7 +2107,7 @@ table.rules td.wrap {
   min-width: 0;
 }
 
-.analyzer-hint {
+.ai-advisor-hint {
   white-space: normal;
 }
 

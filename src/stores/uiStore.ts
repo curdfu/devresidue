@@ -6,6 +6,7 @@ export type PageKey =
   | "devcache"
   | "projects"
   | "unknown"
+  | "ai-review"
   | "risk-results"
   | "rules"
   | "journal"

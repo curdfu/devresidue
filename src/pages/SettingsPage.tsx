@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { FolderPlus, Lock, Sparkles, X } from "lucide-react";
+import { FolderPlus, X } from "lucide-react";
 import { useSettingsStore, DATA_DIR_HINT } from "@/stores/settingsStore";
-import { useAppSettingsStore } from "@/stores/appSettingsStore";
 import { useUiStore } from "@/stores/uiStore";
 import { BACKEND_KIND } from "@/App";
 import { useScanStore } from "@/stores/scanStore";
 import { projectsScope } from "@/stores/settingsStore";
 import { formatDateTime } from "@/utils/format";
+import { AiProfilePanel } from "@/components/AiProfilePanel";
 
 export function SettingsPage() {
   const workspaceRoots = useSettingsStore((s) => s.workspaceRoots);
@@ -17,9 +17,6 @@ export function SettingsPage() {
   const lastScanMode = useScanStore((s) => s.items.length > 0);
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
-
-  const analyzerEnabled = useAppSettingsStore((s) => s.analyzerEnabled);
-  const setAnalyzerEnabled = useAppSettingsStore((s) => s.setAnalyzerEnabled);
 
   const [draft, setDraft] = useState("");
 
@@ -85,41 +82,7 @@ export function SettingsPage() {
             </button>
           </div>
 
-          <div className="settings-card">
-            <h3>AI 分析</h3>
-            <div className="analyzer-toggle-row">
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={analyzerEnabled}
-                  onChange={(e) => void setAnalyzerEnabled(e.target.checked)}
-                />
-                <span className="toggle-track">
-                  <span className="toggle-thumb" />
-                </span>
-              </label>
-              <div>
-                <div style={{ color: "var(--text)", fontWeight: 500 }}>
-                  {analyzerEnabled ? "已开启" : "已关闭"}
-                </div>
-                <div style={{ color: "var(--text-mute)", fontSize: 11.5 }}>
-                  默认关闭——仅提供建议，绝不删除
-                </div>
-              </div>
-            </div>
-            <p>
-              <Sparkles size={12} style={{ verticalAlign: -2, marginRight: 4 }} />
-              开启后，未知数据页可对未识别文件夹进行分析并<b>给出</b>分类建议。
-              建议仅供参考：由你审阅并采纳——不会自动应用任何变更。
-            </p>
-            <p style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-              <Lock size={12} style={{ marginTop: 2, flex: "none", color: "var(--risk-review)" }} />
-              <span>
-                分析仅使用元数据——目录名、文件名、大小与时间戳。绝不读取文件内容，
-                分析器自身也没有删除、计划或写入规则的权限。
-              </span>
-            </p>
-          </div>
+          <AiProfilePanel />
 
           <div className="settings-card">
             <h3>界面主题</h3>

@@ -15,6 +15,7 @@
 resolver = "2"
 members = [
     "crates/devresidue-core",
+    "crates/devresidue-ai",
     "crates/devresidue-providers",
     "crates/devresidue-platform-windows",
     "crates/devresidue-cli",

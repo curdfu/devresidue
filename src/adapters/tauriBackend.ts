@@ -1,6 +1,11 @@
 import type {
-  AnalyzerSuggestionDto,
-  AppSettingsDto,
+  AiConfirmItemArg,
+  AiConfirmResultDto,
+  AiPreparedBatchDto,
+  AiProfileDto,
+  AiProfileInput,
+  AiProfileStateDto,
+  AiSuggestionDto,
   CleanupPlanDto,
   CleanupSessionDto,
   ConfirmPolicy,
@@ -94,26 +99,79 @@ export class TauriBackend implements Backend {
     return this.invoke<DispositionResultDto>("set_disposition", { itemId, disposition });
   }
 
-  async getSettings(): Promise<AppSettingsDto> {
-    return this.invoke<AppSettingsDto>("get_settings");
+  async listAiProfiles(): Promise<AiProfileStateDto> {
+    return this.invoke<AiProfileStateDto>("ai_list_profiles");
   }
 
-  async setAnalyzerEnabled(enabled: boolean): Promise<void> {
-    await this.invoke<void>("set_analyzer_enabled", { enabled });
-  }
-
-  async analyzeItem(itemId: number): Promise<AnalyzerSuggestionDto> {
-    return this.invoke<AnalyzerSuggestionDto>("analyze_item", { itemId });
-  }
-
-  async createRuleFromSuggestion(
-    itemId: number,
-    suggestedRisk: string,
-  ): Promise<DispositionResultDto> {
-    return this.invoke<DispositionResultDto>("create_rule_from_suggestion", {
-      itemId,
-      suggestedRisk,
+  async upsertAiProfile(input: AiProfileInput, apiKey: string): Promise<AiProfileDto> {
+    return this.invoke<AiProfileDto>("ai_upsert_profile", {
+      profileId: input.profileId,
+      name: input.name,
+      baseUrl: input.baseUrl,
+      model: input.model,
+      structuredOutput: input.structuredOutput,
+      timeoutSecs: input.timeoutSecs,
+      enabled: input.enabled,
+      apiKey,
     });
+  }
+
+  async deleteAiProfile(profileId: string): Promise<void> {
+    await this.invoke<void>("ai_delete_profile", { profileId });
+  }
+
+  async setActiveAiProfile(profileId: string | null): Promise<AiProfileStateDto> {
+    return this.invoke<AiProfileStateDto>("ai_set_active_profile", { profileId });
+  }
+
+  async setAiMasterEnabled(enabled: boolean): Promise<AiProfileStateDto> {
+    return this.invoke<AiProfileStateDto>("ai_set_master_enabled", { enabled });
+  }
+
+  async testAiConnection(profileId: string): Promise<void> {
+    await this.invoke<void>("ai_test_connection", { profileId });
+  }
+
+  async listAiModels(profileId: string): Promise<string[]> {
+    return this.invoke<string[]>("ai_list_models", { profileId });
+  }
+
+  async prepareAiBatch(
+    profileId: string,
+    scanGeneration: number,
+    itemIds: number[],
+    includePaths: boolean,
+  ): Promise<AiPreparedBatchDto> {
+    return this.invoke<AiPreparedBatchDto>("ai_prepare_batch", {
+      profileId,
+      scanGeneration,
+      itemIds,
+      includePaths,
+    });
+  }
+
+  async analyzeAiBatch(batchId: string): Promise<AiSuggestionDto[]> {
+    return this.invoke<AiSuggestionDto[]>("ai_analyze", { batchId });
+  }
+
+  async confirmAiBatch(
+    batchId: string,
+    scanGeneration: number,
+    items: AiConfirmItemArg[],
+  ): Promise<AiConfirmResultDto> {
+    return this.invoke<AiConfirmResultDto>("ai_confirm", {
+      batchId,
+      scanGeneration,
+      items,
+    });
+  }
+
+  async cancelAiBatch(batchId: string): Promise<boolean> {
+    return this.invoke<boolean>("ai_cancel", { batchId });
+  }
+
+  async discardAiBatch(batchId: string): Promise<boolean> {
+    return this.invoke<boolean>("ai_discard_batch", { batchId });
   }
 
   async getRules(): Promise<RuleDto[]> {
@@ -122,5 +180,9 @@ export class TauriBackend implements Backend {
 
   async validateRules(): Promise<RulesValidationDto> {
     return this.invoke<RulesValidationDto>("validate_rules");
+  }
+
+  async deleteUserRule(ruleId: string): Promise<void> {
+    await this.invoke<void>("delete_user_rule", { ruleId });
   }
 }

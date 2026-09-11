@@ -15,7 +15,7 @@ use std::time::Duration;
 use devresidue_core::rules::{resolve as resolve_rules, ResolvedRule, RuleSet};
 use devresidue_core::safety::canonical;
 use devresidue_core::safety::probe::PathProbe;
-use devresidue_core::{Evidence, RiskLevel, ScanItem, ScanItemId, SourceKind};
+use devresidue_core::{CleanupAction, Evidence, RiskLevel, ScanItem, ScanItemId, SourceKind};
 
 /// Process-global scan-item id allocator (R04).
 ///
@@ -351,8 +351,9 @@ fn noop_progress() -> Box<dyn Fn(ProgressEvent)> {
 /// - a `Protected` hit forces `risk = Protected` (and `cleanup_action = None`)
 ///   so protected paths can never be planned, regardless of which provider
 ///   discovered them (INV-002, defence in depth);
-/// - any other rule hit (user detection rules from the analyzer / future
-///   community rules) classifies the path with the rule's risk/category;
+/// - any other rule hit (user detection rules / future community rules)
+///   classifies the path with the rule's risk/category and assigns the
+///   conservative recycle-bin strategy when the local risk is cleanable;
 /// - `user-ignore/` declarations never compile into the set, so ignored paths
 ///   are already pre-seeded into the seen-set and never reach this point.
 ///
@@ -368,6 +369,7 @@ pub fn apply_rule_classification(ctx: &ScanContext, item: &mut ScanItem) {
     };
     item.category = rule.category;
     item.risk = rule.risk;
+    item.cleanup_action = cleanup_action_for_rule_risk(rule.risk);
     item.classification_rule_id = Some(rule.id.clone());
     if let Some(product) = &rule.product {
         item.product = Some(product.clone());
@@ -381,8 +383,21 @@ pub fn apply_rule_classification(ctx: &ScanContext, item: &mut ScanItem) {
         format!("matched {} (rule id {})", rule.id, rule.rule_id.raw()),
     ));
     if rule.risk == RiskLevel::Protected {
-        item.cleanup_action = devresidue_core::CleanupAction::None;
         item.source = SourceKind::Rule;
+    }
+}
+
+/// Maps a locally validated rule classification to the only generic action a
+/// rule may grant. Rules never carry direct-delete or shell-command authority:
+/// cleanable entries are offered to the planner for a later Recycle Bin action;
+/// `Unknown` and `Protected` remain unconditionally non-actionable.
+const fn cleanup_action_for_rule_risk(risk: RiskLevel) -> CleanupAction {
+    match risk {
+        RiskLevel::Safe
+        | RiskLevel::RegenerableLocal
+        | RiskLevel::RegenerableDownload
+        | RiskLevel::Review => CleanupAction::RecycleBin,
+        RiskLevel::Protected | RiskLevel::Unknown => CleanupAction::None,
     }
 }
 

@@ -1,18 +1,19 @@
 //! `get_rules` / `validate_rules` commands (R11).
 //!
-//! Read-only inspection of the **actual** merged rule registry (built-in
+//! Inspection and restricted user-rule removal for the **actual** merged rule registry (built-in
 //! `resources/rules` + the user rules container under the data directory) —
 //! the same assembly the scan rule gate uses, but lenient: rules that failed
 //! validation are returned (or counted) instead of aborting the command, so
 //! the frontend can show exactly what is loaded and what is broken.
 //!
 //! This replaces the demo-only rule listing the UI previously rendered from
-//! hard-coded mock data (R11). No mutation happens here; disposition writes
-//! live in `disposition.rs`.
+//! hard-coded mock data (R11). The sole mutation is `delete_user_rule`, which
+//! accepts only an exact user-rule id and delegates source ownership checks to
+//! Core; disposition writes live in `disposition.rs`.
 
 use std::path::Path;
 
-use devresidue_core::rules::{load_rules, RuleSet, RuleSource};
+use devresidue_core::rules::{load_rules, remove_user_rule, user_rules_dir, RuleSet, RuleSource};
 use devresidue_core::ResidueCategory;
 use devresidue_core::RiskLevel;
 use tauri::State;
@@ -66,6 +67,17 @@ pub fn validate_rules(state: State<'_, AppState>) -> Result<RulesValidationDto, 
     })
 }
 
+/// Removes a user-authored rule by exact rule id. Built-in, community and
+/// provider rules are rejected in Core. This never receives a filesystem path
+/// and never changes scan data, cleanup plans or user files outside the rules
+/// destination.
+#[tauri::command]
+pub fn delete_user_rule(state: State<'_, AppState>, rule_id: String) -> Result<(), CommandError> {
+    let data_dir = state.model.lock().unwrap().data_dir().to_path_buf();
+    remove_user_rule(&user_rules_dir(&data_dir), &rule_id)
+        .map_err(|error| CommandError::new(ErrorCode::Engine, error))
+}
+
 /// Machine-facing source label (kebab-case, matches the CLI's wire style).
 fn source_label(source: RuleSource) -> &'static str {
     match source {
@@ -74,7 +86,6 @@ fn source_label(source: RuleSource) -> &'static str {
         RuleSource::User => "user",
         RuleSource::Community => "community",
         RuleSource::BuiltinDetection => "builtin-detection",
-        RuleSource::AiSuggestion => "ai-suggestion",
     }
 }
 

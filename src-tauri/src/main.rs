@@ -19,12 +19,9 @@
 //! get_journal(last_n?)           -> Vec<JournalEntryDto>
 //! set_disposition(item_id, disposition) -> DispositionResultDto  (Phase 13)
 //! open_folder(item_id)           -> ()                              (Phase 13)
-//! get_settings()                 -> SettingsDto                     (Phase 14)
-//! set_analyzer_enabled(bool)     -> ()
-//! analyze_item(item_id)          -> SuggestionDto
-//! create_rule_from_suggestion(item_id, suggested_risk) -> DispositionResultDto
 //! get_rules()                   -> Vec<RuleDto>                    (R11)
 //! validate_rules()              -> RulesValidationDto              (R11)
+//! ai_*                          -> no-secret remote-AI DTOs        (Task 9)
 //! ```
 //!
 //! # IPC contract notes (frontend ↔ backend)
@@ -41,7 +38,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod analyzer;
+mod ai;
 mod contract;
 mod disposition;
 mod ipc_contract;
@@ -69,12 +66,21 @@ fn main() {
             journal::clear_all_data,
             disposition::set_disposition,
             disposition::open_folder,
-            analyzer::get_settings,
-            analyzer::set_analyzer_enabled,
-            analyzer::analyze_item,
-            analyzer::create_rule_from_suggestion,
             rules::get_rules,
-            rules::validate_rules
+            rules::validate_rules,
+            rules::delete_user_rule,
+            ai::ai_list_profiles,
+            ai::ai_upsert_profile,
+            ai::ai_delete_profile,
+            ai::ai_set_active_profile,
+            ai::ai_set_master_enabled,
+            ai::ai_test_connection,
+            ai::ai_list_models,
+            ai::ai_prepare_batch,
+            ai::ai_analyze,
+            ai::ai_confirm,
+            ai::ai_cancel,
+            ai::ai_discard_batch
         ])
         .run(tauri::generate_context!())
         .expect("error while running DevResidue");

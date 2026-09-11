@@ -51,8 +51,7 @@ export type SourceKind =
   | "kondo"
   | "developer-cache-provider"
   | "package-manager"
-  | "agent-provider"
-  | "ai-analysis";
+  | "agent-provider";
 
 // ---- Scan DTOs (snake_case, mirrors core `ScanItem` serde) -------------------
 
@@ -218,7 +217,11 @@ export type ErrorCode =
   | "plan-not-found"
   | "partial-scan"
   | "invalid-item"
-  | "analyzer-disabled"
+  | "ai-disabled"
+  | "ai-not-configured"
+  | "ai-batch-in-progress"
+  | "ai-batch-expired"
+  | "ai-request-failed"
   | "engine";
 
 export type CommandError = {
@@ -304,22 +307,11 @@ export type SubtabDef = {
   categories: ResidueCategory[];
 };
 
-// ---- M4: settings / dispositions / analyzer (aligned with contract.rs) ------
+// ---- M4: Unknown dispositions (aligned with contract.rs) --------------------
 //
 // Wire names verified against src-tauri/src/contract.rs:
 //   - DispositionArg kebab-case: "ignore" | "protect" (flat command args)
 //   - DispositionResultDto camelCase: itemId / ruleId(string) / path / effect
-//   - SuggestionDto camelCase: itemId / productGuess / confidence(0..1 f32) /
-//     category / suggestedRisk / explanation / suggestedRuleId / path
-//     (Rust field `suggested_risk` + rename_all = "camelCase" → `suggestedRisk`)
-//   - SettingsDto camelCase: analyzerEnabled
-//   - ErrorCode has "analyzer-disabled" (SPEC §26 default off)
-
-/** `get_settings` result; `set_analyzer_enabled` returns void on success. */
-export type AppSettingsDto = {
-  /** AI analyzer toggle (SPEC §26: default off, suggestions only). */
-  analyzerEnabled: boolean;
-};
 
 /** Wire values of `DispositionArg` (kebab-case command argument). */
 export type Disposition = "ignore" | "protect";
@@ -334,26 +326,110 @@ export type DispositionResultDto = {
   effect: string;
 };
 
-/**
- * `analyze_item` result — a suggestion, never an action (SPEC §26: the AI
- * has no delete/plan authority; the user must accept it explicitly).
- */
-export type AnalyzerSuggestionDto = {
+// ---- Remote AI Advisor (no secret / no path) ------------------------------
+//
+// These types mirror the Task 9 Tauri contract. API Keys are deliberately
+// not part of any DTO or store state: the profile form passes its one-shot
+// password field separately to the backend adapter and clears it immediately.
+
+export type StructuredOutputMode = "auto" | "json-schema" | "json-object";
+
+/** Closed confirmation vocabulary: UNKNOWN requires a user decision first. */
+export type AiFinalRisk = Exclude<RiskLevel, "unknown">;
+
+export const AI_FINAL_RISK_LEVELS: readonly AiFinalRisk[] = [
+  "safe",
+  "regenerable-local",
+  "regenerable-download",
+  "review",
+  "protected",
+] as const;
+
+/** Closed category vocabulary for an AI-confirmed user rule. */
+export type AiFinalCategory = Exclude<ResidueCategory, "unknown">;
+
+export const AI_FINAL_CATEGORY_OPTIONS: readonly AiFinalCategory[] = [
+  "ai-agent",
+  "ide",
+  "developer-cache",
+  "package-cache",
+  "build-artifact",
+  "dependency",
+  "log",
+  "temporary",
+  "session",
+  "workspace-state",
+  "configuration",
+  "credential",
+] as const;
+
+/** Stored profile metadata returned by IPC. Never contains Key material. */
+export type AiProfileDto = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  enabled: boolean;
+  isActive: boolean;
+};
+
+export type AiProfileStateDto = {
+  masterEnabled: boolean;
+  profiles: AiProfileDto[];
+};
+
+/** Non-secret profile fields submitted alongside a separate ephemeral Key. */
+export type AiProfileInput = {
+  profileId: string | null;
+  name: string;
+  baseUrl: string;
+  model: string;
+  structuredOutput: StructuredOutputMode;
+  timeoutSecs: number;
+  enabled: boolean;
+};
+
+/** Sanitized metadata displayed for explicit remote-send consent. */
+export type AiPreparedEntryDto = {
   itemId: number;
-  productGuess: string | null;
-  /** 0..=1 (wire f32; the UI renders it as a percentage). */
+  zone: string;
+  relativeDepth: number;
+  displayName: string;
+  sourceKind: string;
+  categoryHint: string;
+  productHint: string | null;
+  sizeBucket: string;
+  ageBucket: string;
+  signals: string[];
+};
+
+export type AiPreparedBatchDto = {
+  batchId: string;
+  scanGeneration: number;
+  profileId: string;
+  /** The request includes snapshot-derived full paths; paths never enter this DTO. */
+  includesPaths: boolean;
+  entries: AiPreparedEntryDto[];
+};
+
+export type AiSuggestionDto = {
+  itemId: number;
+  suggestedRisk: AiFinalRisk;
   confidence: number;
-  /** kebab-case category label, e.g. "build-artifact". */
-  category: string;
-  /**
-   * kebab-case risk label, e.g. "regenerable-local".
-   * Wire name is `suggestedRisk` (Rust `suggested_risk`, camelCase serde).
-   */
-  suggestedRisk: string;
-  explanation: string;
-  /** The analyzer's own rule slug for this suggestion, when known. */
-  suggestedRuleId: string | null;
-  path: string;
+  reason: string;
+  productGuess: string | null;
+  finalRiskOptions: AiFinalRisk[];
+};
+
+export type AiConfirmItemArg = {
+  itemId: number;
+  finalRisk: AiFinalRisk;
+  finalCategory: AiFinalCategory;
+};
+
+export type AiConfirmResultDto = {
+  confirmedCount: number;
+  auditWarning: boolean;
 };
 
 // ---- R11: rules API (aligned with contract.rs, batch 3) ----------------------

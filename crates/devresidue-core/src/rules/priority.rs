@@ -11,8 +11,7 @@ use super::{loader::CompiledRule, matcher::rule_matches};
 /// Where a rule came from. Priority order is fixed by SPEC §14:
 ///
 /// ```text
-/// Built-in Protected > User Protected > User > Community >
-/// Built-in Detection > AI Suggestion
+/// Built-in Protected > User Protected > User > Community > Built-in Detection
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -28,8 +27,6 @@ pub enum RuleSource {
     /// Built-in detection rules shipped with the product
     /// (folders `agents/ ide/ dev_cache/ packages/`).
     BuiltinDetection,
-    /// AI analyzer suggestions (Phase 14).
-    AiSuggestion,
 }
 
 impl RuleSource {
@@ -42,7 +39,6 @@ impl RuleSource {
             RuleSource::User => 2,
             RuleSource::Community => 3,
             RuleSource::BuiltinDetection => 4,
-            RuleSource::AiSuggestion => 5,
         }
     }
 }
@@ -55,7 +51,6 @@ impl fmt::Display for RuleSource {
             RuleSource::User => "User",
             RuleSource::Community => "Community",
             RuleSource::BuiltinDetection => "Builtin Detection",
-            RuleSource::AiSuggestion => "AI Suggestion",
         };
         f.write_str(label)
     }
@@ -279,7 +274,6 @@ mod tests {
         assert!(RuleSource::UserProtected.rank() < RuleSource::User.rank());
         assert!(RuleSource::User.rank() < RuleSource::Community.rank());
         assert!(RuleSource::Community.rank() < RuleSource::BuiltinDetection.rank());
-        assert!(RuleSource::BuiltinDetection.rank() < RuleSource::AiSuggestion.rank());
     }
 
     #[test]
@@ -290,7 +284,6 @@ mod tests {
             (RuleSource::User, "user"),
             (RuleSource::Community, "community"),
             (RuleSource::BuiltinDetection, "builtin-detection"),
-            (RuleSource::AiSuggestion, "ai-suggestion"),
         ] {
             assert_eq!(
                 serde_json::to_string(&source).unwrap(),

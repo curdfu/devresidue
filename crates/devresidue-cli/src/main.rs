@@ -23,7 +23,7 @@
 //!   deleting is never interrupted mid-item (per-item atomicity comes from the
 //!   DeletePort), so Ctrl-C there terminates the process as usual.
 
-mod analyze_cmd;
+mod ai_cmd;
 mod clean_cmd;
 mod journal_cmd;
 mod plan_cmd;
@@ -160,16 +160,118 @@ enum Command {
         #[command(subcommand)]
         cmd: UnknownCommand,
     },
-    /// Run the metadata-only directory analyzer over one scan item (SPEC §26,
-    /// default off). Suggestions never delete anything.
-    Analyze {
-        /// Scan item id from the most recent scan.
-        #[arg(value_name = "ITEM_ID")]
-        item_id: u64,
-        /// Also write the suggestion as a user detection rule (validator-gated).
-        #[arg(long)]
-        create_rule: bool,
+    /// Configure and use the optional remote AI advisor (disabled by default).
+    Ai {
+        #[command(subcommand)]
+        cmd: AiCommand,
     },
+}
+
+/// Remote-AI commands. They never accept a path, cleanup plan or rule text.
+#[derive(Debug, Subcommand)]
+enum AiCommand {
+    /// Show non-secret AI configuration and recovery state.
+    Status,
+    /// Enable remote AI globally. A selected usable profile is still required.
+    Enable,
+    /// Disable remote AI globally.
+    Disable,
+    /// Manage non-secret AI profile metadata and its derived key.
+    Profile {
+        #[command(subcommand)]
+        cmd: AiProfileCommand,
+    },
+    /// Inspect or repair an interrupted non-secret profile transaction.
+    Recovery {
+        #[command(subcommand)]
+        cmd: AiRecoveryCommand,
+    },
+    /// Analyze explicitly selected IDs from the latest verified real scan.
+    Analyze {
+        /// Comma-separated scan item ids (at most 20 eligible entries).
+        #[arg(long, value_name = "IDS")]
+        items: String,
+        /// After showing the validated suggestions, read an explicit local
+        /// confirmation line from stdin in the form ITEM_ID=RISK,... .
+        #[arg(long)]
+        confirm: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AiProfileCommand {
+    /// List stored non-secret profile metadata.
+    List,
+    /// Create a profile. The key is read only from stdin, never an argument.
+    Create {
+        #[command(flatten)]
+        input: AiProfileInputArgs,
+    },
+    /// Replace an existing profile's non-secret settings and supplied key.
+    Update {
+        #[arg(value_name = "PROFILE_ID")]
+        profile_id: String,
+        #[command(flatten)]
+        input: AiProfileInputArgs,
+    },
+    /// Delete exactly one profile and its Core-derived environment key.
+    Delete {
+        #[arg(value_name = "PROFILE_ID")]
+        profile_id: String,
+    },
+    /// Select the active profile used by remote AI requests.
+    Select {
+        #[arg(value_name = "PROFILE_ID")]
+        profile_id: String,
+    },
+    /// Clear the active profile selection without changing any profile.
+    ClearSelection,
+}
+
+#[derive(Debug, Subcommand)]
+enum AiRecoveryCommand {
+    /// Show whether profile recovery is required.
+    Status,
+    /// Re-submit a create/update recovery using fresh non-secret settings and
+    /// a key read from stdin.
+    Resubmit {
+        #[arg(value_name = "PROFILE_ID")]
+        profile_id: String,
+        #[command(flatten)]
+        input: AiProfileInputArgs,
+    },
+    /// Complete a pending deletion recovery for exactly one marked profile.
+    Delete {
+        #[arg(value_name = "PROFILE_ID")]
+        profile_id: String,
+    },
+    /// Disable the marked profile and remove only its derived environment key.
+    Abandon {
+        #[arg(value_name = "PROFILE_ID")]
+        profile_id: String,
+    },
+}
+
+/// Non-secret profile metadata. `--key-stdin` is deliberately a boolean gate:
+/// no command-line argument can ever carry an API key value.
+#[derive(Debug, Clone, clap::Args)]
+struct AiProfileInputArgs {
+    #[arg(long)]
+    name: String,
+    #[arg(long = "base-url")]
+    base_url: String,
+    #[arg(long)]
+    model: String,
+    #[arg(long, default_value = "auto", value_name = "MODE")]
+    structured_output: String,
+    #[arg(long, default_value_t = 120, value_name = "SECONDS")]
+    timeout_secs: u64,
+    /// Store a disabled profile; it cannot be used until it is updated.
+    #[arg(long)]
+    disabled: bool,
+    /// Read the API key from standard input. Do not pass keys as arguments.
+    #[arg(long)]
+    key_stdin: bool,
 }
 
 /// Disposition subcommands of `devresidue unknown`.
@@ -290,10 +392,7 @@ fn main() -> ExitCode {
         }),
         Command::Journal { last } => journal_cmd::run(last),
         Command::Unknown { cmd } => unknown_cmd::run(cmd),
-        Command::Analyze {
-            item_id,
-            create_rule,
-        } => analyze_cmd::run(item_id, create_rule),
+        Command::Ai { cmd } => ai_cmd::run(cmd),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
