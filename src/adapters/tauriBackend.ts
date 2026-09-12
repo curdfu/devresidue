@@ -8,6 +8,7 @@ import type {
   AiSuggestionDto,
   CleanupPlanDto,
   CleanupSessionDto,
+  ClearJournalResultDto,
   ConfirmPolicy,
   Disposition,
   DispositionResultDto,
@@ -17,6 +18,10 @@ import type {
   ScanHandleDto,
   ScanScope,
   ScanSnapshotDto,
+  ResetScanDataResultDto,
+  AppDataInfoDto,
+  ScanScopePreviewDto,
+  WorkspaceRootValidationDto,
 } from "@/types";
 import type { Backend } from "./backend";
 import { toCommandError } from "./backend";
@@ -82,6 +87,30 @@ export class TauriBackend implements Backend {
 
   async getJournal(lastN?: number): Promise<JournalEntryDto[]> {
     return this.invoke<JournalEntryDto[]>("get_journal", { lastN: lastN ?? null });
+  }
+
+  async clearJournal(): Promise<ClearJournalResultDto> {
+    return this.invoke<ClearJournalResultDto>("clear_journal");
+  }
+
+  async resetScanData(): Promise<ResetScanDataResultDto> {
+    return this.invoke<ResetScanDataResultDto>("reset_scan_data");
+  }
+
+  async pickWorkspaceDirectory(): Promise<string | null> {
+    return this.invoke<string | null>("pick_workspace_directory");
+  }
+
+  async validateWorkspaceRoots(roots: string[]): Promise<WorkspaceRootValidationDto[]> {
+    return this.invoke<WorkspaceRootValidationDto[]>("validate_workspace_roots", { roots });
+  }
+
+  async getScanScopePreview(scope: ScanScope): Promise<ScanScopePreviewDto> {
+    return this.invoke<ScanScopePreviewDto>("get_scan_scope_preview", { scope });
+  }
+
+  async getAppDataInfo(): Promise<AppDataInfoDto> {
+    return this.invoke<AppDataInfoDto>("get_app_data_info");
   }
 
   async clearAllData(): Promise<number> {

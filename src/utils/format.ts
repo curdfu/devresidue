@@ -51,22 +51,22 @@ export interface RiskMeta {
 
 const RISK_META: Record<RiskLevel, RiskMeta> = {
   safe: {
-    label: "安全",
-    groupLabel: "可安全清理",
+    label: "低风险候选",
+    groupLabel: "低风险候选",
     className: "risk-safe",
-    hint: "删除后无持久影响，工具会按需重新生成。",
+    hint: "当前按低风险候选处理；执行前仍会重新验证，工具可能按需重新生成。",
   },
   "regenerable-local": {
     label: "本地可重建",
     groupLabel: "本地可重建",
     className: "risk-local",
-    hint: "下次构建时在本地重新生成，无需联网下载。",
+    hint: "下次使用可在本地重建，耗时取决于实际使用。",
   },
   "regenerable-download": {
-    label: "需重新下载",
-    groupLabel: "删除后需重新下载",
+    label: "需联网重新下载",
+    groupLabel: "需联网重新下载",
     className: "risk-download",
-    hint: "下次安装时需要从网络重新下载。",
+    hint: "下次使用需要联网重新下载，实际流量取决于使用内容。",
   },
   review: {
     label: "需人工确认",
@@ -134,13 +134,13 @@ export function sourceLabel(source: string): string {
 export function deletionImpact(risk: RiskLevel, size: number): string {
   switch (risk) {
     case "safe":
-      return "无持久影响，工具会按需重新生成。";
+      return `当前占用估计 ${formatBytes(size)}；这是低风险候选，执行前仍会重新验证。`;
     case "regenerable-local":
-      return `下次构建时本地重新生成（约 ${formatBytes(size)} 的编译时间）。`;
+      return `当前占用估计 ${formatBytes(size)}；下次使用需要本地重建，耗时取决于实际使用。`;
     case "regenerable-download":
-      return `下次安装时需重新下载 ${formatBytes(size)}。`;
+      return `当前占用估计 ${formatBytes(size)}；下次使用需要联网重新下载，实际流量取决于使用内容。`;
     case "review":
-      return `不可恢复——${formatBytes(size)} 可能包含有价值的数据，请先确认。`;
+      return `当前占用估计 ${formatBytes(size)}；内容可能包含有价值的数据，请先确认后再决定。`;
     case "protected":
       return "拒绝删除。此路径受内置规则保护。";
     case "unknown":

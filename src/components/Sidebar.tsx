@@ -17,6 +17,7 @@ import type { LucideIcon } from "lucide-react";
 import { useUiStore, type PageKey } from "@/stores/uiStore";
 import { BACKEND_KIND } from "@/App";
 import { useScanStore } from "@/stores/scanStore";
+import { familyOfItem } from "@/selectors/scanPresentation";
 
 interface NavDef {
   key: PageKey;
@@ -27,10 +28,10 @@ interface NavDef {
 
 const NAV: NavDef[] = [
   { key: "dashboard", label: "概览", icon: Gauge, section: "总览" },
-  { key: "agents", label: "AI Agents", icon: Bot, section: "存储" },
-  { key: "devcache", label: "开发缓存", icon: Package, section: "存储" },
-  { key: "projects", label: "项目", icon: Boxes, section: "存储" },
-  { key: "unknown", label: "未知数据", icon: CircleHelp, section: "存储" },
+  { key: "agents", label: "Agent 数据", icon: Bot, section: "存储" },
+  { key: "devcache", label: "工具数据", icon: Package, section: "存储" },
+  { key: "projects", label: "项目产物", icon: Boxes, section: "存储" },
+  { key: "unknown", label: "待判断", icon: CircleHelp, section: "存储" },
   { key: "rules", label: "规则", icon: ShieldCheck, section: "信任" },
   { key: "journal", label: "日志", icon: ScrollText, section: "信任" },
   { key: "settings", label: "设置", icon: SettingsIcon, section: "信任" },
@@ -53,6 +54,7 @@ export function Sidebar() {
       devcache: 0,
       projects: 0,
       unknown: 0,
+      "selected-items": 0,
       "ai-review": 0,
       dashboard: 0,
       "risk-results": 0,
@@ -61,38 +63,18 @@ export function Sidebar() {
       settings: 0,
     };
     for (const it of items) {
-      if (it.risk === "unknown") {
-        c.unknown += 1;
-        continue;
-      }
-      switch (it.category) {
-        case "ai-agent":
-        case "session":
-        case "temporary":
-        case "workspace-state":
-        case "configuration":
-        case "credential":
-          c.agents += 1;
-          break;
-        case "developer-cache":
-        case "package-cache":
-        case "dependency":
-          c.devcache += 1;
-          break;
-        case "build-artifact":
-        case "log":
-          c.projects += 1;
-          break;
-        default:
-          break;
-      }
+      if (it.risk === "unknown" || it.risk === "review") c.unknown += 1;
+      const family = familyOfItem(it);
+      if (family === "agents") c.agents += 1;
+      else if (family === "tools") c.devcache += 1;
+      else c.projects += 1;
     }
     return c;
   }, [items]);
 
   let lastSection = "";
   return (
-    <nav className="nav">
+    <nav className="nav" aria-label="主导航">
       <div className="nav-brand">
         <div className="nav-brand-mark">
           <FolderCog size={15} strokeWidth={2.4} />
@@ -116,7 +98,9 @@ export function Sidebar() {
           <div key={def.key} style={{ display: "contents" }}>
             {sectionHeader}
             <button
+              type="button"
               className={`nav-item ${page === def.key ? "active" : ""}`}
+              aria-current={page === def.key ? "page" : undefined}
               onClick={() => setPage(def.key)}
             >
               <Icon size={15} strokeWidth={1.9} />
@@ -139,7 +123,15 @@ export function Sidebar() {
           </span>
         </span>
         <button
+          type="button"
           className="theme-toggle"
+          aria-label={
+            theme === "system"
+              ? "当前跟随系统，切换到深色主题"
+              : theme === "dark"
+                ? "当前为深色主题，切换到浅色主题"
+                : "当前为浅色主题，切换到跟随系统"
+          }
           onClick={toggleTheme}
           title={
             theme === "system"

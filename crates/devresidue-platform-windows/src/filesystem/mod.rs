@@ -152,3 +152,34 @@ pub fn lock_file_exclusive(
     // the byte range (documented Win32 handle-close semantics).
     Ok(Box::new(WindowsFileLock { _file: file }))
 }
+
+/// Attempts an exclusive whole-file lock and returns immediately when another
+/// process owns it. The `busy:` prefix is consumed by the command layer and
+/// mapped to the structured Busy error instead of waiting on the UI thread.
+pub fn try_lock_file_exclusive(
+    file: std::fs::File,
+) -> Result<Box<dyn devresidue_core::safety::FileLock>, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Storage::FileSystem::{
+        LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+    };
+    let mut overlapped = windows::Win32::System::IO::OVERLAPPED::default();
+    #[allow(unsafe_code)]
+    let result = unsafe {
+        LockFileEx(
+            windows::Win32::Foundation::HANDLE(file.as_raw_handle() as *mut _),
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            None,
+            u32::MAX,
+            u32::MAX,
+            &mut overlapped,
+        )
+    };
+    match result {
+        Ok(()) => Ok(Box::new(WindowsFileLock { _file: file })),
+        Err(error) if (error.code().0 as u32 & 0xFFFF) == 33 => {
+            Err("busy: application data operation lock is already held".to_string())
+        }
+        Err(error) => Err(format!("LockFileEx try-lock failed: {error}")),
+    }
+}

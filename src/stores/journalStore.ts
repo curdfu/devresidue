@@ -59,6 +59,6 @@ export function filterJournal(
   return entries.filter(
     (e) =>
       (session === "all" || e.sessionId === session) &&
-      (result === "all" || (e.result ?? "") === result),
+      (result === "all" || (result === "unrecorded" ? !e.result : (e.result ?? "") === result)),
   );
 }

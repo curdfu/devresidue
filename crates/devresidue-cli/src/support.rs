@@ -17,6 +17,7 @@ use devresidue_core::rules::{load_rules, load_user_ignore_paths, RuleSet};
 use devresidue_core::safety::probe::{PathProbe, ProcessProbe};
 use devresidue_core::safety::process::ProcessGuard;
 use devresidue_core::safety::{ProtectedRootRegistry, SafetyValidator};
+use devresidue_core::safety::FileLock;
 use devresidue_core::ExternalCommandSpec;
 use devresidue_platform_windows::safety::{WindowsPathProbe, WindowsProcessProbe};
 use devresidue_providers::scan_ctx::ToolQuery;
@@ -33,6 +34,23 @@ pub fn data_dir() -> Result<PathBuf, String> {
         }
     }
     journal::default_data_dir()
+}
+
+/// Acquires the fixed application-data operation lock shared with the Tauri
+/// shell. The lock file is intentionally outside resettable stores and is
+/// never deleted by maintenance commands.
+pub fn acquire_app_operation_lock(base: &Path) -> Result<Box<dyn FileLock>, String> {
+    std::fs::create_dir_all(base)
+        .map_err(|error| format!("create {}: {error}", base.display()))?;
+    let path = base.join("app-data-operation.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| format!("open {}: {error}", path.display()))?;
+    devresidue_platform_windows::filesystem::try_lock_file_exclusive(file)
 }
 
 /// Opens the plans store at an explicit data root (commands that already hold

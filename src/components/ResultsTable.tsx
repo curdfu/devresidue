@@ -106,7 +106,7 @@ export function ResultsTable({
                   }}
                   onChange={() => {
                     const allSelected = allEligible.length > 0 && selectedEligibleCount === allEligible.length;
-                    if (allSelected) selection.clear();
+                    if (allSelected) selection.clear(items);
                     else selection.selectAll(items);
                   }}
                   title="全选可清理项（受保护与未知数据不可勾选）"
@@ -114,7 +114,7 @@ export function ResultsTable({
               </th>
             )}
             <SortHeader label="名称与位置" sortKey="name" className="col-name" />
-            <SortHeader label="大小" sortKey="size" className="col-size" />
+            <SortHeader label="逻辑大小估计" sortKey="size" className="col-size" />
             <SortHeader label="清理影响" sortKey="risk" className="col-impact" />
             <SortHeader label="最近修改" sortKey="age" className="col-age" />
           </tr>
@@ -135,11 +135,16 @@ export function ResultsTable({
             return (
               <tr
                 key={item.id}
+                data-detail-trigger={item.id}
                 className={`item-row ${selected ? "selected" : ""} ${open ? "detail-open" : ""}`}
                 tabIndex={0}
                 aria-label={`查看 ${item.display_name} 的详情`}
                 onClick={openOrClose}
                 onKeyDown={(event) => {
+                  // Keep native keyboard behavior for checkboxes and any
+                  // future buttons/links rendered inside the row. The row is
+                  // activated only while the row itself owns focus.
+                  if (event.target !== event.currentTarget) return;
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     openOrClose();

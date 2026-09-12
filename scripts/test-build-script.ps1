@@ -67,6 +67,9 @@ if ($null -eq $ps1) {
     Assert-True (($ps1 -match 'winget') -and ($ps1 -match 'Read-Host'))     '交互安装询问（winget + Read-Host Yes/No）'
     Assert-True (($ps1 -match 'npm ci') -and ($ps1 -match 'npm install') -and ($ps1 -match 'package-lock')) '前端依赖：package-lock 用 npm ci，否则 npm install'
     Assert-True (($ps1 -match '--release') -and ($ps1 -match '--locked'))    'cargo release 构建（--release --locked）'
+    Assert-True (($ps1 -match '\$CargoTargetDir\s*=\s*Join-Path\s+\$RepoRoot\s+''target''') -and ($ps1 -match '\$env:CARGO_TARGET_DIR\s*=\s*\$CargoTargetDir')) 'Cargo 构建统一使用当前仓库 target，避免跨路径缓存污染'
+    Assert-True (($ps1 -match '\$gui\s*=\s*Join-Path\s+\$CargoTargetDir') -and ($ps1 -match '\$cli\s*=\s*Join-Path\s+\$CargoTargetDir')) 'Portable GUI/CLI 源文件均从统一 Cargo target 读取'
+    Assert-True (($ps1 -match 'RedirectStandardOutput') -and ($ps1 -match 'RedirectStandardError') -and ($ps1 -match 'ReadToEndAsync')) 'heartbeat helper 保留并转发 Cargo stdout/stderr，失败时可见原始错误'
     Assert-True ($ps1 -match 'Compress-Archive')                            '压缩包逻辑（Compress-Archive）'
     Assert-True ($ps1 -match 'dist-portable')                               '便携输出目录 dist-portable'
     # Portable CLI 绿色包文件名：Windows 文件系统大小写不敏感，GUI 与 CLI 目标名

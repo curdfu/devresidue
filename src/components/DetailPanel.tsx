@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { ScanItemDto } from "@/types";
 import { useUiStore } from "@/stores/uiStore";
 import {
@@ -21,7 +22,7 @@ import {
 } from "@/utils/format";
 import { RiskBadge } from "./common";
 import { UnknownActions } from "./UnknownActions";
-import { RULES } from "@/data/rules";
+import { useRulesStore } from "@/stores/rulesStore";
 
 /**
  * Detail evidence is deliberately ordered by the decision a person needs to
@@ -36,11 +37,36 @@ export function DetailPanel({
   unknownMode?: boolean;
 }) {
   const openDetail = useUiStore((s) => s.openDetail);
+  const rules = useRulesStore((s) => s.rules);
+  const loadRules = useRulesStore((s) => s.load);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const meta = riskMeta(item.risk);
-  const ruleIds = item.evidence
+  const classificationRule = item.classification_rule_id
+    ? rules.find((rule) => rule.ruleId === item.classification_rule_id) ?? null
+    : null;
+  const evidenceRuleIds = item.evidence
     .map((e) => e.rule_id)
     .filter((rule): rule is number => rule !== null);
-  const rules = RULES.filter((rule) => ruleIds.includes(rule.id));
+
+  useEffect(() => {
+    if (rules.length === 0) void loadRules();
+  }, [loadRules, rules.length]);
+
+  useEffect(() => {
+    closeRef.current?.focus({ preventScroll: true });
+  }, [item.id]);
+
+  const close = () => {
+    openDetail(null);
+    // Return keyboard focus to the row that opened this detail. The row may
+    // have been removed by a filter or a new snapshot, so failing closed is
+    // intentional; the page remains usable and the next heading is available.
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(`[data-detail-trigger="${item.id}"]`)
+        ?.focus({ preventScroll: true });
+    });
+  };
 
   return (
     <>
@@ -50,8 +76,10 @@ export function DetailPanel({
           <div className="path">{item.path}</div>
         </div>
         <button
+          ref={closeRef}
+          type="button"
           className="detail-close"
-          onClick={() => openDetail(null)}
+          onClick={close}
           title="关闭详情"
           aria-label="关闭详情"
         >
@@ -61,7 +89,7 @@ export function DetailPanel({
 
       <div className="detail-stats">
         <div className="stat">
-          <div className="k">大小</div>
+          <div className="k">逻辑大小估计</div>
           <div className="v">{formatBytes(item.logical_size)}</div>
         </div>
         <div className="stat">
@@ -133,17 +161,29 @@ export function DetailPanel({
         </Qa>
 
         <Qa icon={<Sparkles size={14} />} q="对应哪条规则">
-          {rules.length > 0 ? (
+          {classificationRule ? (
             <div className="qa-evidence">
-              {rules.map((rule) => (
-                <div key={rule.id} className="ev">
-                  <span className="src">规则 {rule.id} · {rule.source}</span>
-                  <span className="txt">{rule.slug}——{rule.description}</span>
-                </div>
-              ))}
+              <div className="ev">
+                <span className="src">{classificationRule.ruleId} · {classificationRule.source ?? "来源未知"}</span>
+                <span className="txt">{classificationRule.description ?? "未提供规则描述"}</span>
+              </div>
+            </div>
+          ) : item.classification_rule_id ? (
+            <div className="qa-evidence">
+              <div className="ev">
+                <span className="src">{item.classification_rule_id}</span>
+                <span className="txt">扫描结果提供了规则 ID，但当前规则列表未返回该规则，不能伪造关联。</span>
+              </div>
+            </div>
+          ) : evidenceRuleIds.length > 0 ? (
+            <div className="qa-evidence">
+              <div className="ev">
+                <span className="src">扫描证据 RuleId：{evidenceRuleIds.join(", ")}</span>
+                <span className="txt">这是数字证据标识，未提供可与规则 slug 精确匹配的关联。</span>
+              </div>
             </div>
           ) : (
-            <span className="a muted-inline">无规则命中——由 Provider 自身启发式分类。</span>
+            <span className="a muted-inline">未提供可跳转规则——可能由 Provider 自身启发式分类。</span>
           )}
         </Qa>
       </div>

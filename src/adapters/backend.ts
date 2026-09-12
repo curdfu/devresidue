@@ -8,6 +8,7 @@ import type {
   AiSuggestionDto,
   CleanupPlanDto,
   CleanupSessionDto,
+  ClearJournalResultDto,
   CommandError,
   ConfirmPolicy,
   Disposition,
@@ -18,6 +19,10 @@ import type {
   ScanHandleDto,
   ScanScope,
   ScanSnapshotDto,
+  ResetScanDataResultDto,
+  AppDataInfoDto,
+  ScanScopePreviewDto,
+  WorkspaceRootValidationDto,
 } from "@/types";
 
 /**
@@ -46,6 +51,14 @@ export interface Backend {
     dryRun: boolean,
   ): Promise<CleanupSessionDto>;
   getJournal(lastN?: number): Promise<JournalEntryDto[]>;
+  /** Removes only DevResidue-owned journal shards. */
+  clearJournal(): Promise<ClearJournalResultDto>;
+  /** Removes the latest scan snapshot and saved plans, preserving logs/settings. */
+  resetScanData(): Promise<ResetScanDataResultDto>;
+  pickWorkspaceDirectory(): Promise<string | null>;
+  validateWorkspaceRoots(roots: string[]): Promise<WorkspaceRootValidationDto[]>;
+  getScanScopePreview(scope: ScanScope): Promise<ScanScopePreviewDto>;
+  getAppDataInfo(): Promise<AppDataInfoDto>;
   /**
    * 清空 (log page): wipes journal shards, the persisted scan snapshot and
    * the plan store, then resets the in-memory model — the whole app returns

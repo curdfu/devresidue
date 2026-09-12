@@ -36,6 +36,7 @@ use crate::ScanOptions;
 /// Runs the scan pipeline.
 pub fn run(opts: ScanOptions) -> Result<(), String> {
     let base = support::data_dir()?;
+    let _operation_lock = support::acquire_app_operation_lock(&base)?;
 
     if opts.fixtures {
         let items = fixture_scan_items();

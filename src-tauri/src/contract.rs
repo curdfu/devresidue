@@ -43,8 +43,46 @@ pub enum ScanScope {
     Projects { roots: Vec<String> },
     /// Unknown developer-data provider only (SPEC §25).
     Unknown,
-    /// Everything: dev caches + kondo (default roots) + agents + unknown.
-    Default,
+    /// Everything: dev caches + kondo + agents + unknown. Missing roots use
+    /// automatic backend resolution; Some(empty) intentionally skips kondo.
+    Default {
+        #[serde(default)]
+        workspace_roots: Option<Vec<String>>,
+    },
+}
+
+/// One workspace-root validation result returned by the settings preflight.
+/// The command validates input only; it never grants cleanup authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRootValidationDto {
+    pub input: String,
+    pub normalized: Option<String>,
+    pub valid: bool,
+    pub error_code: Option<String>,
+    pub message: Option<String>,
+    pub duplicate: bool,
+    pub contained_by: Option<String>,
+}
+
+/// A non-invasive preview of what a scan scope will ask the providers to do.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanScopePreviewDto {
+    pub scope: ScanScope,
+    pub providers: Vec<String>,
+    pub workspace_roots: Vec<String>,
+    pub known_locations: Vec<String>,
+    pub deferred_locations: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Identifies the application-owned data root and the active backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppDataInfoDto {
+    pub data_dir: String,
+    pub backend_mode: String,
 }
 
 /// The confirmation level a plan build / execution is granted.
@@ -160,6 +198,21 @@ pub struct JournalEntryDto {
     pub estimated_size: u64,
     pub result: Option<String>,
     pub error: Option<String>,
+}
+
+/// Result of clearing only application-owned journal shards.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearJournalResultDto {
+    pub removed_shard_count: usize,
+}
+
+/// Result of resetting the persisted scan snapshot and cleanup plans.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetScanDataResultDto {
+    pub removed_plan_count: usize,
+    pub had_snapshot: bool,
 }
 
 // ---- Unknown dispositions DTOs (Phase 13) -----------------------------------
@@ -322,6 +375,8 @@ pub enum ErrorCode {
     AiBatchExpired,
     /// A sanitized remote-AI request, validation or local confirmation failed.
     AiRequestFailed,
+    /// A mutating application operation is already running.
+    Busy,
     /// Any other engine/planner/store failure.
     Engine,
 }
@@ -585,7 +640,7 @@ mod tests {
                 roots: vec!["D:\\Code".into()],
             },
             ScanScope::Unknown,
-            ScanScope::Default,
+            ScanScope::Default { workspace_roots: None },
         ] {
             let json = serde_json::to_string(&scope).unwrap();
             let back: ScanScope = serde_json::from_str(&json).unwrap();
@@ -595,7 +650,7 @@ mod tests {
                     | (ScanScope::DevCache, ScanScope::DevCache)
                     | (ScanScope::Projects { .. }, ScanScope::Projects { .. })
                     | (ScanScope::Unknown, ScanScope::Unknown)
-                    | (ScanScope::Default, ScanScope::Default)
+                    | (ScanScope::Default { .. }, ScanScope::Default { .. })
             ));
         }
         let json = serde_json::to_string(&ScanScope::Projects {
@@ -603,6 +658,11 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json, r#"{"kind":"projects","roots":["D:\\Code"]}"#);
+        let automatic: ScanScope = serde_json::from_str(r#"{"kind":"default"}"#).unwrap();
+        assert!(matches!(automatic, ScanScope::Default { workspace_roots: None }));
+        let empty_custom: ScanScope =
+            serde_json::from_str(r#"{"kind":"default","workspace_roots":[]}"#).unwrap();
+        assert!(matches!(empty_custom, ScanScope::Default { workspace_roots: Some(roots) } if roots.is_empty()));
     }
 
     #[test]

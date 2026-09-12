@@ -96,6 +96,8 @@ export type ScanItemDto = {
   explanation: string;
   cleanup_action: CleanupAction;
   evidence: Evidence[];
+  /** Exact string rule id that classified the item, when available. */
+  classification_rule_id: string | null;
   /**
    * UI-side overlap annotation (not part of the core wire format yet): a
    * human list of display names this item's tree intersects. Null when no
@@ -199,6 +201,41 @@ export type JournalEntryDto = {
   error: string | null;
 };
 
+/** Result of clearing only DevResidue cleanup journal shards. */
+export type ClearJournalResultDto = {
+  removedShardCount: number;
+};
+
+/** Result of resetting scan snapshot and persisted cleanup plans. */
+export type ResetScanDataResultDto = {
+  removedPlanCount: number;
+  hadSnapshot: boolean;
+};
+
+export type WorkspaceRootValidationDto = {
+  input: string;
+  normalized: string | null;
+  valid: boolean;
+  errorCode: string | null;
+  message: string | null;
+  duplicate: boolean;
+  containedBy: string | null;
+};
+
+export type ScanScopePreviewDto = {
+  scope: ScanScope;
+  providers: string[];
+  workspaceRoots: string[];
+  knownLocations: string[];
+  deferredLocations: string[];
+  warnings: string[];
+};
+
+export type AppDataInfoDto = {
+  dataDir: string;
+  backendMode: "tauri" | "mock";
+};
+
 // ---- Requests / errors -------------------------------------------------------
 
 export type ScanScope =
@@ -206,7 +243,7 @@ export type ScanScope =
   | { kind: "dev-cache" }
   | { kind: "projects"; roots: string[] }
   | { kind: "unknown" }
-  | { kind: "default" };
+  | { kind: "default"; workspace_roots?: string[] };
 
 export type ConfirmPolicy = "default" | "redownload" | "review" | "all";
 
@@ -222,6 +259,7 @@ export type ErrorCode =
   | "ai-batch-in-progress"
   | "ai-batch-expired"
   | "ai-request-failed"
+  | "busy"
   | "engine";
 
 export type CommandError = {
@@ -299,6 +337,7 @@ export const RISK_GROUP_ORDER: readonly RiskGroup[] = [
 /** A page-level filter over items: category face or risk face. */
 export type ItemFilter =
   | { kind: "category"; categories: ResidueCategory[]; subtabs?: SubtabDef[] }
+  | { kind: "family"; family: "agents" | "tools" | "projects"; subtabs?: SubtabDef[] }
   | { kind: "risk"; risk: RiskLevel; subtabs?: SubtabDef[] };
 
 export type SubtabDef = {

@@ -44,7 +44,15 @@
   --font-body: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
 
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
   --radius: 6px;
+  --radius-sm: 5px;
+  --focus-ring: 0 0 0 2px var(--accent-soft);
+  --motion-fast: 120ms;
   --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
@@ -79,6 +87,14 @@
   --danger: #cc4437;
   --ok: #22954f;
 
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --radius-sm: 5px;
+  --focus-ring: 0 0 0 2px var(--accent-soft);
+  --motion-fast: 120ms;
   --shadow-panel: 0 1px 2px rgba(40, 35, 20, 0.08), 0 8px 24px rgba(40, 35, 20, 0.07);
 }
 
@@ -147,6 +163,26 @@ select {
   display: grid;
   grid-template-columns: 208px 1fr;
   height: 100vh;
+}
+
+/* AI review owns the only vertical scroll surface on its page. This avoids
+   a nested panel scrollbar competing with the main window scrollbar. */
+.ai-review-page {
+  overflow: hidden;
+}
+
+.ai-review-page .storage-list {
+  overflow: hidden;
+}
+
+.ai-review-page .page-head {
+  flex: none;
+}
+
+.ai-review-page .page-body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .nav {
@@ -307,7 +343,33 @@ select {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-left: auto;
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 8px 22px;
+  margin-left: 0;
+  flex: none;
+}
+
+.scanbar .scan-status {
+  flex: 1 1 auto;
+  margin-right: auto;
+}
+
+.scanbar .scan-status > span:not(.dot) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scanbar.is-scanning {
+  background: var(--bg-raise);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.scanbar.is-scanning .scan-status {
+  color: var(--text);
 }
 
 .scope-select {
@@ -322,6 +384,23 @@ select {
   background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%;
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
+}
+.field-label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-mute);
+  font-size: 12px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .scope-select:focus {
   outline: 1px solid var(--accent-line);
@@ -383,24 +462,35 @@ select {
   font-size: 12px;
 }
 
-/* Progress rail under the page head. */
+/* Scan activity rail: reserve its height even when the main column is crowded. */
 .scan-progress {
-  height: 2px;
+  flex: 0 0 4px;
+  width: 100%;
+  height: 4px;
   background: var(--border-soft);
   position: relative;
   overflow: hidden;
+  contain: paint;
+}
+.scan-progress.active {
+  background: color-mix(in srgb, var(--accent) 14%, var(--border-soft));
 }
 .scan-progress.active::after {
   content: "";
   position: absolute;
   inset: 0;
-  width: 30%;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  animation: sweep 1.1s linear infinite;
+  width: 25%;
+  background: linear-gradient(90deg, transparent, var(--accent) 18%, var(--accent) 82%, transparent);
+  /* Start within the visible rail; a scan must not initially look idle. */
+  animation: scan-loop 2.4s linear -0.6s infinite;
+  opacity: 1;
+  backface-visibility: hidden;
+  transform: translate3d(-100%, 0, 0);
+  will-change: transform;
 }
-@keyframes sweep {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(400%); }
+@keyframes scan-loop {
+  from { transform: translate3d(-100%, 0, 0); }
+  to { transform: translate3d(400%, 0, 0); }
 }
 
 .scan-status {
@@ -411,6 +501,9 @@ select {
   font-size: 11px;
   color: var(--text-mute);
   min-width: 0;
+}
+.scan-status-detail {
+  color: var(--text-mute);
 }
 
 .scan-status .dot {
@@ -458,6 +551,9 @@ select {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  width: 100%;
+  padding: 0;
+  text-align: left;
   cursor: pointer;
   user-select: none;
 }
@@ -1331,8 +1427,9 @@ table.mini .num {
 .exec-bar i {
   display: block;
   height: 100%;
-  background: var(--accent);
-  transition: width 240ms ease;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: sweep 1.2s linear infinite;
 }
 
 .exec-line {
@@ -1689,6 +1786,175 @@ table.rules.journal-table td.num {
   color: var(--text-mute);
 }
 
+.journal-groups {
+  overflow: auto;
+  padding: 0;
+}
+
+.journal-session {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.journal-session:last-child {
+  border-bottom: 0;
+}
+
+.journal-session-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 10px;
+  background: var(--bg-raise);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.journal-session-head h2 {
+  margin: 0 0 3px;
+  font-size: 14px;
+}
+
+.journal-session-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.journal-session .journal-table {
+  margin: 0;
+}
+
+.journal-path {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-mute);
+  font-size: 11px;
+}
+
+.journal-detail-row td {
+  padding: 0 12px 12px;
+  background: var(--bg-raise);
+}
+
+.journal-detail-copy {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm, 6px);
+  padding: 10px;
+  background: var(--bg-panel);
+}
+
+.journal-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.journal-detail-copy pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font: 11px/1.55 var(--font-mono);
+}
+
+.ai-step-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.ai-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-mute);
+  font-size: 11.5px;
+}
+
+.ai-step:not(:last-child)::after {
+  content: "→";
+  margin-left: 2px;
+  color: var(--border);
+}
+
+.ai-step.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ai-step.complete {
+  color: var(--text-soft);
+}
+
+.ai-step-index {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font: 10px var(--font-mono);
+}
+
+.rule-details {
+  margin-top: 7px;
+  color: var(--text-mute);
+  font-size: 11px;
+}
+
+.rule-details summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.rule-detail-copy {
+  display: grid;
+  gap: 3px;
+  margin-top: 6px;
+  padding: 7px 8px;
+  border-left: 2px solid var(--border);
+  line-height: 1.5;
+}
+
+.app-data-info {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+  color: var(--text-mute);
+  font-size: 11.5px;
+}
+
+.app-data-info .mono {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .journal-session-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .journal-session-counts {
+    justify-content: flex-start;
+  }
+
+  .journal-path {
+    max-width: 220px;
+  }
+}
+
 /* ---- Settings: remote AI Advisor toggle -------------------------- */
 
 .ai-advisor-toggle-row {
@@ -1696,6 +1962,38 @@ table.rules.journal-table td.num {
   align-items: center;
   gap: 12px;
   padding: 4px 0;
+}
+
+.ai-profile-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-profile-inline-field,
+.ai-profile-enabled {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  line-height: 1.25;
+}
+
+.ai-profile-inline-field {
+  gap: 6px;
+}
+
+.ai-profile-enabled {
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ai-profile-enabled input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
 }
 
 .toggle {
@@ -1823,9 +2121,9 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* Scan bar wraps on narrow windows (status + select + button stack). */
+/* Keep the status and controls on one stable row at normal widths. */
 .scanbar {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   margin-left: 0;
 }
 
@@ -2277,6 +2575,44 @@ select {
   font-size: 13px;
 }
 
+/* Category filters stay on one intentional row. Labels are compact enough for
+   the normal app width; an unusually narrow window gets one horizontal escape
+   surface instead of splitting controls across multiple rows. */
+.category-results-head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.category-results-head .results-controls {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  min-width: max-content;
+}
+
+.category-results-head .search-field {
+  flex: 0 0 240px;
+  min-width: 200px;
+}
+
+.category-results-head .subtabs {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.category-results-head .subtab {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.category-results-head .results-count {
+  flex: 0 0 auto;
+  margin-right: 0;
+  white-space: nowrap;
+}
+
 /* Decision-first table. Essential cells fit a 1200px app with a side panel;
    a table scrollbar remains an escape hatch, not the normal experience. */
 table.results {
@@ -2572,6 +2908,18 @@ tr.item-row:focus-visible {
   line-height: 1.35;
 }
 
+.cleanup-dock-hint-only {
+  justify-content: flex-start;
+}
+
+.selected-items-empty {
+  position: absolute;
+  inset: 170px 0 auto;
+  text-align: center;
+  color: var(--text-mute);
+  pointer-events: none;
+}
+
 /* Dialog affordance and review-state messaging */
 .modal {
   width: min(680px, calc(100vw - 48px));
@@ -2583,6 +2931,14 @@ tr.item-row:focus-visible {
 
 .modal-compact {
   width: min(420px, calc(100vw - 48px));
+}
+
+.review-modal {
+  width: min(760px, calc(100vw - 48px));
+}
+
+.review-modal .modal-body {
+  min-height: 220px;
 }
 
 .modal-error {
@@ -2612,6 +2968,55 @@ tr.item-row:focus-visible {
 .plan-empty strong {
   color: var(--risk-review);
   font-size: 14px;
+}
+
+.plan-impact-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+  color: var(--text-soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.plan-impact-summary b {
+  color: var(--text);
+}
+
+.plan-impact-summary strong {
+  color: var(--risk-review);
+}
+
+.review-busy {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raise);
+  color: var(--text-soft);
+}
+
+.review-busy strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.review-busy > span {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.review-wait {
+  margin-right: auto;
+  color: var(--text-mute);
+  font-size: 12px;
 }
 
 .skip-title {
@@ -2682,5 +3087,148 @@ tr.item-row:focus-visible {
   .dash-action {
     width: 100%;
     justify-content: center;
+  }
+}
+
+@media (max-width: 720px) {
+  .scanbar {
+    flex-wrap: wrap;
+  }
+
+  .scanbar .scan-status {
+    flex: 1 0 100%;
+    margin-right: 0;
+  }
+
+  .settings-card form .root-add {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .ai-review-panel {
+    padding: 14px;
+  }
+
+  .ai-step-rail {
+    gap: 5px;
+  }
+
+  .ai-step:not(:last-child)::after {
+    content: "·";
+  }
+}
+
+/* Rules filters stay on one row at desktop widths. The table itself keeps its
+   own horizontal escape surface; only the compact filter controls are aligned
+   here so labels and inputs do not form a tall column. */
+.rules-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 220px) minmax(190px, 220px);
+  align-items: end;
+  column-gap: 12px;
+  row-gap: 12px;
+}
+
+.rules-layout > .validate-strip,
+.rules-layout > .table-card,
+.rules-layout > p {
+  grid-column: 1 / -1;
+}
+
+.rules-layout > .field-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.rules-layout > .field-label input {
+  width: 100%;
+  max-width: none !important;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.rules-layout > .filter-row {
+  grid-column: 2 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rules-layout > .filter-row .field-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.rules-layout > .filter-row .scope-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 860px) {
+  .rules-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rules-layout > .validate-strip,
+  .rules-layout > .field-label,
+  .rules-layout > .filter-row,
+  .rules-layout > .table-card,
+  .rules-layout > p {
+    grid-column: 1;
+  }
+
+  .rules-layout > .filter-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* Essential activity feedback stays animated, at half speed. Override both
+     the duration and iteration limit above; a static full rail looks finished. */
+  .scan-progress.active::after {
+    animation: scan-loop 4.8s linear -1.2s infinite !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .scan-progress.active {
+    background: Canvas;
+  }
+
+  .scan-progress.active::after {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+
+  :focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
+  }
+
+  .badge,
+  .subtab.active,
+  .btn.primary {
+    forced-color-adjust: none;
+    border: 1px solid ButtonText;
+  }
+
+  .badge::before {
+    background: currentColor;
   }
 }

@@ -17,6 +17,7 @@ use crate::PlanOptions;
 /// Runs the plan subcommand against the most recent scan.
 pub fn run(opts: PlanOptions) -> Result<(), String> {
     let base = support::data_dir()?;
+    let _operation_lock = support::acquire_app_operation_lock(&base)?;
     let snapshot = scan_store::load(&base).map_err(|e| {
         format!(
             "cannot read the most recent scan ({e}); run `devresidue scan` first \

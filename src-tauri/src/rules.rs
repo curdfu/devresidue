@@ -73,6 +73,9 @@ pub fn validate_rules(state: State<'_, AppState>) -> Result<RulesValidationDto, 
 /// destination.
 #[tauri::command]
 pub fn delete_user_rule(state: State<'_, AppState>, rule_id: String) -> Result<(), CommandError> {
+    let _operation = state
+        .begin_operation("delete-user-rule")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = state.model.lock().unwrap().data_dir().to_path_buf();
     remove_user_rule(&user_rules_dir(&data_dir), &rule_id)
         .map_err(|error| CommandError::new(ErrorCode::Engine, error))

@@ -13,7 +13,14 @@ use crate::scan_ctx::{ProgressEvent, ScanContext};
 pub const PROVIDER: &str = "kondo";
 
 /// Default workspace-root candidates (see `resolve_workspace_roots`).
-pub const DEFAULT_WORKSPACE_ROOT_CANDIDATES: [&str; 2] = ["%USERPROFILE%\\source", "D:\\Code"];
+///
+/// Keep automatic discovery limited to the conventional per-user source
+/// directory. Machine-specific roots such as `C:\\Code` / `D:\\Code` must be
+/// added explicitly in Settings so the user controls the scan boundary.
+pub const DEFAULT_WORKSPACE_ROOT_CANDIDATES: [&str; 2] = [
+    "%USERPROFILE%\\source",
+    "%USERPROFILE%\\Projects",
+];
 
 /// Resolves the workspace roots: explicit list, then
 /// `DEVRESIDUE_WORKSPACE_ROOTS` (semicolon-separated), then the default

@@ -23,11 +23,11 @@ export function wireGenerationLifecycle(): void {
     useSelectionStore.getState().clear();
 
     // A plan under construction references old-generation item ids; the
-    // backend would reject them — clear proactively so the flow restarts.
+    // backend would reject them — invalidate proactively so the flow restarts.
+    // CleanupStore keeps an executing/session result alive because it is
+    // bound to the original plan and must not be retargeted to new IDs.
     const cleanup = useCleanupStore.getState();
-    if (cleanup.step !== "selecting") {
-      cleanup.close();
-    }
+    cleanup.invalidateForGeneration(key);
 
     // Remote-AI batches bind item ids to one HMAC-verified snapshot. They
     // must never survive a generation advance, even if the numeric ids are

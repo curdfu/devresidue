@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useRef } from "react";
 import {
   CheckCircle2,
   Download,
@@ -9,122 +9,28 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import type { CleanupPlanDto, ConfirmPolicy, PlanAction, Confirmation } from "@/types";
-import { useCleanupStore, confirmBreakdown } from "@/stores/cleanupStore";
+import type { CleanupPlanDto, ConfirmPolicy } from "@/types";
+import {
+  useCleanupStore,
+  confirmBreakdown,
+  finalActionLabel,
+  summarizePlanImpact,
+  type PlanImpactSummary,
+} from "@/stores/cleanupStore";
 import { useScanStore } from "@/stores/scanStore";
 import { formatBytes, formatCount } from "@/utils/format";
+import {
+  actionPresentation,
+  confirmationPresentation,
+  presentationLabel,
+  presentationTitle,
+  reasonPresentation,
+  type CleanupPresentation,
+} from "@/utils/cleanupPresentation";
 import { StatusBadge } from "./common";
 import { useSelectionStore } from "@/stores/selectionStore";
-
-/** Wire verbs → human labels (plan/session tables share the vocabulary). */
-function actionLabel(action: PlanAction | string): string {
-  switch (action) {
-    case "recycle":
-      // The engine executes RecycleBin as a verified permanent deletion on
-      // Windows (the recycle API cannot be handle-bound); label accordingly.
-      return "永久删除";
-    case "delete":
-      return "永久删除";
-    case "execute":
-      return "执行工具命令";
-    default:
-      return action;
-  }
-}
-
-function confirmLabel(c: Confirmation | string): string {
-  switch (c) {
-    case "none":
-      return "无需确认";
-    case "redownload":
-      return "需重新下载";
-    case "review":
-      return "需人工确认";
-    default:
-      return c;
-  }
-}
-
-/** Mock/backend skip reasons keep their "skip: …" machine prefix; translate the head. */
-function skipReasonLabel(reason: string): string {
-  if (reason.startsWith("skip: protected-risk")) return "跳过：受保护风险";
-  if (reason.startsWith("skip: unknown-risk")) return "跳过：未知风险";
-  if (reason.startsWith("skip: action none")) return "跳过：无可执行操作";
-  if (reason.startsWith("skip: deferred")) return reason.replace("skip: deferred", "跳过：已暂缓");
-  if (reason.startsWith("skip: requires")) {
-    return reason
-      .replace("skip: requires redownload confirmation", "跳过：需要「需重新下载」级别确认")
-      .replace("skip: requires review confirmation", "跳过：需要「需人工确认」级别确认");
-  }
-  if (reason.startsWith("skip: unknown selection")) return "跳过：未知勾选";
-  if (reason.startsWith("skip: unverifiable")) return reason.replace("skip: unverifiable", "跳过：无法验证");
-  return reason;
-}
-
-/** Per-item session detail → human phrasing.
- *
- * Real-backend engine reasons are `verb:reason-key: tail` ("defer:…",
- * "deny:…", plain gate messages like "mode-mismatch: …"); mock-mode plan
- * skips use the "skip: …" prefix. Every known head maps to a short Chinese
- * label; the tail (the engine's explanatory sentence) is preserved so the
- * user sees the CONCRETE reason, never just "跳过".
- */
-function sessionItemDetail(detail: string): string {
-  // Engine deny reasons (SPEC §15 vocabulary).
-  const denyMap: Array<[string, string]> = [
-    ["deny:protected-root-exact", "已拒绝：命中受保护根（精确匹配）"],
-    ["deny:protected-root-ancestor", "已拒绝：位于受保护根之上（删除会波及保护目录）"],
-    ["deny:protected-risk", "已拒绝：受保护风险"],
-    ["deny:unknown-risk", "已拒绝：未知风险"],
-    ["deny:reparse-crossing", "已拒绝：路径穿过 reparse point"],
-    ["deny:reparse-target", "已拒绝：目标是 reparse point"],
-    ["deny:reparse-substitution", "已拒绝：reparse 替换攻击嫌疑"],
-    ["deny:identity-changed", "已拒绝：对象与扫描时不符（已被替换）"],
-    ["deny:identity-not-recorded", "已拒绝：缺少扫描时身份记录"],
-    ["deny:stale-snapshot", "已拒绝：快照已过期"],
-    ["deny:target-missing", "已拒绝：目标已不存在"],
-    ["deny:read-only-changed", "已拒绝：只读属性发生变化"],
-    ["deny:process-unknown", "已拒绝：无法确认相关进程状态"],
-    ["deny:unverifiable", "已拒绝：无法验证"],
-    ["deny:not-absolute", "已拒绝：路径不是绝对路径"],
-    ["deny:path-mismatch", "已拒绝：路径与快照不符"],
-    ["deny:requires review confirmation", "已拒绝：需要人工确认"],
-    ["deny:requires redownload confirmation", "已拒绝：需要重新下载确认"],
-  ];
-  // Engine defer reasons.
-  const deferMap: Array<[string, string]> = [
-    ["defer:process-running", "暂缓：相关工具进程正在运行——退出该工具后重试"],
-  ];
-  // Plain authorisation-gate messages (R2/R3/R4 vocabulary).
-  const gateMap: Array<[string, string]> = [
-    ["item-not-in-current-scan", "条目不属于最新扫描——请重新扫描后再计划"],
-    ["plan-snapshot-mismatch", "计划快照与扫描记录不一致（可能被篡改）"],
-    ["risk-declaration-mismatch", "计划声明的风险与扫描记录不符"],
-    ["confirmation-downgraded", "计划确认级别低于该项要求"],
-    ["mode-mismatch", "计划的清理方式与扫描授权不符"],
-    ["command-mismatch", "计划命令与扫描冻结的命令不符"],
-    ["protected-descendant", "目标树内含受保护区域——整树删除会波及"],
-    ["discovery-source-invalidated", "分类规则已失效（规则被移除或不再匹配）"],
-    ["action-mismatch", "扫描记录未授权删除该项"],
-    ["unbound-delete-refused", "对象绑定失败，未执行删除（可重试）"],
-    ["identity mismatch at port", "删除时对象已被替换——未删除"],
-  ];
-  // Dry-run verbs.
-  if (detail === "would recycle") return "将永久删除";
-  if (detail === "would delete") return "将永久删除";
-  if (detail === "would execute") return "将执行工具命令";
-  // "skip: …" (mock-mode plan skips).
-  const skip = skipReasonLabel(detail);
-  if (skip !== detail) return skip;
-  // Engine reason heads: translate the head, keep the concrete tail.
-  for (const [prefix, label] of [...denyMap, ...deferMap, ...gateMap]) {
-    if (detail.startsWith(prefix)) {
-      const tail = detail.slice(prefix.length).replace(/^[:\s]+/, "").trim();
-      return tail ? `${label}（${tail}）` : label;
-    }
-  }
-  return detail;
-}
+import { useUiStore } from "@/stores/uiStore";
+import { ModalFrame } from "./common/ModalFrame";
 
 /**
  * The whole cleanup flow as overlay states driven by the cleanup store:
@@ -137,106 +43,12 @@ export function CleanupFlow() {
   return (
     <>
       <SelectionDock />
-      {step === "plan-review" && <PlanReviewModal />}
-      {step === "dry-run-review" && <DryRunModal />}
+      {["planning", "plan-review", "dry-run", "dry-run-review"].includes(step) && <ReviewFlowModal />}
       {step === "confirming" && <ConfirmDialog />}
       {step === "executing" && <ExecutingModal />}
       {step === "session" && <SessionModal />}
       {step === "error" && <ErrorModal />}
     </>
-  );
-}
-
-/**
- * Shared keyboard-safe dialog frame. Overlays never close on backdrop clicks:
- * cleanup decisions remain deliberate. While the engine is executing the
- * frame is explicitly non-dismissible, including through Escape.
- */
-function ModalFrame({
-  children,
-  onDismiss,
-  dismissible = true,
-  className = "",
-}: {
-  children: (titleId: string) => ReactNode;
-  onDismiss?: () => void;
-  dismissible?: boolean;
-  className?: string;
-}) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const onDismissRef = useRef(onDismiss);
-  const titleId = useId();
-  onDismissRef.current = onDismiss;
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    const focusInitial = () => {
-      const target = dialog?.querySelector<HTMLElement>(
-        "[data-autofocus], button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
-      );
-      (target ?? dialog)?.focus();
-    };
-    focusInitial();
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && dismissible) {
-        event.preventDefault();
-        onDismissRef.current?.();
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-
-      const focusable = Array.from(
-        dialog.querySelectorAll<HTMLElement>(
-          "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
-        ),
-      ).filter((element) => !element.hasAttribute("hidden") && element.getClientRects().length > 0);
-
-      if (focusable.length === 0) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-
-      const first = focusable.at(0);
-      const last = focusable.at(-1);
-      if (!first || !last) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
-    };
-  }, [dismissible]);
-
-  return (
-    <div className="modal-veil">
-      <div
-        ref={dialogRef}
-        className={`modal ${className}`.trim()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-      >
-        {children(titleId)}
-      </div>
-    </div>
   );
 }
 
@@ -250,8 +62,13 @@ function SelectionDock() {
   const policy = useCleanupStore((s) => s.policy);
   const busy = useCleanupStore((s) => s.busy);
   const step = useCleanupStore((s) => s.step);
+  const page = useUiStore((s) => s.page);
+  const setPage = useUiStore((s) => s.setPage);
+  const clearSelection = useSelectionStore((s) => s.clear);
 
   if (selectedIds.size === 0 || step !== "selecting") return null;
+
+  const canCreatePlan = page === "agents" || page === "devcache" || page === "projects" || page === "risk-results" || page === "selected-items";
 
   const chosen = items.filter((item) => selectedIds.has(item.id));
   const bytes = chosen.reduce((sum, item) => sum + item.logical_size, 0);
@@ -265,28 +82,34 @@ function SelectionDock() {
       : "请先完成一轮扫描，再生成清理计划。";
 
   return (
-    <div className="cleanup-dock" role="region" aria-label="已选择的清理条目">
+    <div className={`cleanup-dock ${canCreatePlan ? "" : "cleanup-dock-hint-only"}`} role="region" aria-label="已选择的清理条目">
       <span className="summary">
-        已勾选 <b>{selectedIds.size}</b> 项 · 占用 <b>{formatBytes(bytes)}</b>
+        已勾选 <b>{selectedIds.size}</b> 项 · 逻辑大小估计 <b>{formatBytes(bytes)}</b>
       </span>
-      {scanHint && (
+      {!canCreatePlan ? (
+        <>
+          <span className="cleanup-dock-hint" role="status">当前页面不提供清理计划入口。</span>
+          <button type="button" className="btn small ghost" onClick={() => setPage("selected-items")}>查看已选</button>
+        </>
+      ) : scanHint ? (
         <span className="cleanup-dock-hint" role="status">
           {scanHint}
         </span>
-      )}
-      <select
+      ) : null}
+      {canCreatePlan && <select
         className="scope-select"
         value={policy}
         onChange={(event) => useCleanupStore.getState().setPolicy(event.target.value as ConfirmPolicy)}
         title="本次计划允许的确认级别"
         aria-label="本次计划允许的确认级别"
       >
-        <option value="default">低风险：安全 + 本地重建</option>
+        <option value="default">低风险候选 + 本地重建</option>
         <option value="redownload">包含：需重新下载</option>
         <option value="review">包含：需人工确认</option>
         <option value="all">所有可选风险（不含未知/受保护）</option>
-      </select>
-      <button
+      </select>}
+      {canCreatePlan && <button
+        type="button"
         className="btn primary"
         disabled={busy || !scanComplete}
         title={scanHint ?? "根据已勾选条目生成清理计划"}
@@ -297,66 +120,152 @@ function SelectionDock() {
         }}
       >
         生成清理计划
-      </button>
+      </button>}
+      <button type="button" className="btn small ghost" onClick={() => clearSelection()}>清空全部选择</button>
     </div>
   );
 }
 
-/* ---- 2. plan review ------------------------------------------------ */
+/* ---- 2. stable plan review / dry-run shell ------------------------- */
 
-function PlanReviewModal() {
+function ReviewFlowModal() {
+  const step = useCleanupStore((s) => s.step);
   const plan = useCleanupStore((s) => s.plan);
+  const planContext = useCleanupStore((s) => s.planContext);
+  const session = useCleanupStore((s) => s.dryRunSession);
   const runDryRun = useCleanupStore((s) => s.runDryRun);
   const close = useCleanupStore((s) => s.close);
   const busy = useCleanupStore((s) => s.busy);
-  if (!plan) return null;
+  const policy = useCleanupStore((s) => s.policy);
+  const selectedIds = useSelectionStore((s) => s.selected);
+  const scanItems = useScanStore((s) => s.items);
+  const scanGeneration = useScanStore((s) => s.generation);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const reviewRef = useRef<HTMLButtonElement>(null);
 
-  const hasExecutableItems = plan.items.length > 0;
+  const planning = step === "planning";
+  const dryRunning = step === "dry-run";
+  const busyStage = planning ? "planning" : dryRunning ? "dry-run" : null;
+  const impact = plan
+    ? summarizePlanImpact(plan, planContext, scanGeneration, [...selectedIds], policy)
+    : null;
+  const hasExecutableItems = plan ? plan.items.length > 0 : false;
+  const canReview = Boolean(plan && hasExecutableItems && impact?.contextValid);
+  const canConfirm = Boolean(session && impact?.contextValid);
+  const selectedBytes = scanItems
+    .filter((item) => selectedIds.has(item.id))
+    .reduce((sum, item) => sum + item.logical_size, 0);
+  const planTitle = plan ? `清理计划 #${plan.planId}` : "清理计划";
+  const title = planning
+    ? "正在生成清理计划…"
+    : dryRunning
+      ? "正在预演清理计划…"
+      : step === "dry-run-review"
+        ? "预演完成——未删除文件"
+        : planTitle;
+  const subtitle = planning
+    ? "正在根据当前扫描快照计算可执行条目，请稍候。"
+    : dryRunning
+      ? "预演不会删除文件；工具查询等既有只读验证仍可能执行。"
+      : step === "dry-run-review"
+        ? "预演未删除文件；工具查询等只读验证可能已执行。"
+        : plan
+          ? hasExecutableItems
+            ? `计划清理 ${plan.items.length} 项 · 逻辑大小估计 ${formatBytes(plan.totalEstimatedBytes)} · 跳过 ${plan.skipped.length} 项`
+            : `没有可执行条目 · 跳过 ${plan.skipped.length} 项`
+          : "等待清理计划结果。";
+  const initialFocusRef = step === "dry-run-review" ? closeRef : step === "plan-review" ? reviewRef : undefined;
+
   return (
-    <ModalFrame onDismiss={close}>
-      {(titleId) => (
+    <ModalFrame
+      onDismiss={busyStage ? undefined : close}
+      dismissible={!busyStage}
+      className="review-modal"
+      initialFocusRef={initialFocusRef}
+    >
+      {({ titleId, descriptionId }) => (
         <>
           <div className="modal-head">
-            <FileWarning size={18} />
+            {planning || dryRunning || step === "dry-run-review" ? <FlaskConical size={18} /> : <FileWarning size={18} />}
             <div>
-              <h2 id={titleId}>清理计划 #{plan.planId}</h2>
-              <div className="sub">
-                {hasExecutableItems
-                  ? `计划清理 ${plan.items.length} 项 · 预计 ${formatBytes(plan.totalEstimatedBytes)} · 跳过 ${plan.skipped.length} 项`
-                  : `没有可执行条目 · 跳过 ${plan.skipped.length} 项`}
-              </div>
+              <h2 id={titleId}>{title}</h2>
+              <div id={descriptionId} className="sub">{subtitle}</div>
             </div>
-            <button
-              className="detail-close"
-              onClick={close}
-              style={{ marginLeft: "auto" }}
-              aria-label="关闭清理计划"
-              title="关闭清理计划"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          <div className="modal-body">
-            {hasExecutableItems ? (
-              <PlanItemsTable plan={plan} />
-            ) : (
-              <div className="plan-empty" role="status">
-                <strong>未形成可执行清理计划</strong>
-                <span>已跳过 {plan.skipped.length} 项，请调整选择或提高确认范围。</span>
-              </div>
+            {!busyStage && (
+              <button
+                ref={closeRef}
+                className="detail-close"
+                onClick={close}
+                style={{ marginLeft: "auto" }}
+                aria-label="关闭清理复核"
+                title="关闭清理复核"
+              >
+                <X size={16} />
+              </button>
             )}
-            <SkippedItems plan={plan} />
+          </div>
+          <div className="modal-body" aria-busy={busyStage !== null}>
+            {impact ? (
+              <ImpactSummaryPanel summary={impact} />
+            ) : planning ? (
+              <div className="plan-impact-summary" role="status">
+                <div><b>已选择对象</b> {selectedIds.size} 项 · 逻辑大小估计 {formatBytes(selectedBytes)}</div>
+                <div><b>影响摘要</b> 正在计算动作、风险和授权要求…</div>
+              </div>
+            ) : null}
+
+            {planning && <ReviewBusyState stage="planning" />}
+
+            {dryRunning && (
+              <>
+                {plan && <PlanItemsTable plan={plan} />}
+                <ReviewBusyState stage="dry-run" />
+              </>
+            )}
+
+            {step === "plan-review" && plan && (
+              hasExecutableItems ? (
+                <PlanItemsTable plan={plan} />
+              ) : (
+                <div className="plan-empty" role="status">
+                  <strong>未形成可执行清理计划</strong>
+                  <span>已跳过 {plan.skipped.length} 项，请调整选择或提高确认范围。</span>
+                </div>
+              )
+            )}
+            {step === "plan-review" && plan && <SkippedItems plan={plan} />}
+
+            {step === "dry-run-review" && (
+              session ? <SessionItemsTable session={session} /> : <div className="plan-empty" role="status">预演结果尚未返回，请稍候。</div>
+            )}
           </div>
           <div className="modal-foot">
-            {hasExecutableItems ? (
+            {planning && <span className="review-wait" role="status">正在等待计划结果…</span>}
+            {dryRunning && <span className="review-wait" role="status">正在等待预演结果…</span>}
+            {step === "plan-review" && hasExecutableItems && (
               <>
                 <button className="btn" onClick={close}>放弃</button>
-                <button className="btn primary" data-autofocus disabled={busy} onClick={() => void runDryRun()}>
+                <button
+                  className="btn primary"
+                  ref={reviewRef}
+                  disabled={busy || !canReview}
+                  title={impact?.contextIssue ?? "先运行不删除预演"}
+                  onClick={() => void runDryRun()}
+                >
                   <FlaskConical size={14} /> 先预演（不删除）
                 </button>
               </>
-            ) : (
-              <button className="btn primary" data-autofocus onClick={close}>返回调整选择</button>
+            )}
+            {step === "plan-review" && !hasExecutableItems && (
+              <button ref={reviewRef} className="btn primary" onClick={close}>返回调整选择</button>
+            )}
+            {step === "dry-run-review" && (
+              <>
+                <button ref={closeRef} className="btn" onClick={close}>关闭</button>
+                <button className="btn danger" disabled={!canConfirm} onClick={() => useCleanupStore.setState({ step: "confirming" })}>
+                  <Play size={14} /> 继续执行
+                </button>
+              </>
             )}
           </div>
         </>
@@ -365,19 +274,32 @@ function PlanReviewModal() {
   );
 }
 
+function ReviewBusyState({ stage }: { stage: "planning" | "dry-run" }) {
+  const planning = stage === "planning";
+  return (
+    <div className="review-busy" role="status" aria-live="polite" aria-busy="true">
+      <div className="exec-progress">
+        <div className="exec-bar" aria-hidden="true"><i /></div>
+      </div>
+      <strong>{planning ? "正在生成清理计划…" : "正在预演清理计划…"}</strong>
+      <span>{planning ? "按当前扫描代次校验条目和风险。" : "逐项验证计划；不会删除文件，工具查询等只读验证可能执行。"}</span>
+    </div>
+  );
+}
+
 function PlanItemsTable({ plan }: { plan: CleanupPlanDto }) {
   return (
     <div className="mini-table">
       <table className="mini">
         <thead>
-          <tr><th>条目</th><th>操作</th><th>确认级别</th><th className="num">大小</th></tr>
+          <tr><th>条目</th><th>操作</th><th>确认级别</th><th className="num">逻辑大小估计</th></tr>
         </thead>
         <tbody>
           {plan.items.map((item) => (
             <tr key={item.scanItemId}>
               <td className="mono" title={item.path}>{item.path}</td>
-              <td>{actionLabel(item.action)}</td>
-              <td>{confirmLabel(item.confirmation)}</td>
+              <td><PresentationText presentation={actionPresentation(item.action)} /></td>
+              <td><PresentationText presentation={confirmationPresentation(item.confirmation)} /></td>
               <td className="num">{formatBytes(item.estimatedSize)}</td>
             </tr>
           ))}
@@ -396,7 +318,7 @@ function SkippedItems({ plan }: { plan: CleanupPlanDto }) {
         {plan.skipped.map((item) => (
           <div key={item.scanItemId} className="skip-row">
             <span className="mono">{item.path}</span>
-            <span className="why">{skipReasonLabel(item.reason)}</span>
+            <PresentationText className="why" presentation={reasonPresentation(item.reason)} />
           </div>
         ))}
       </div>
@@ -404,68 +326,46 @@ function SkippedItems({ plan }: { plan: CleanupPlanDto }) {
   );
 }
 
-/* ---- 3. dry-run report ---------------------------------------------- */
-
-function DryRunModal() {
-  const session = useCleanupStore((s) => s.dryRunSession);
-  const close = useCleanupStore((s) => s.close);
-  const setStep = () => useCleanupStore.setState({ step: "confirming" });
-  if (!session) return null;
-
-  return (
-    <ModalFrame onDismiss={close}>
-      {(titleId) => (
-        <>
-          <div className="modal-head">
-            <FlaskConical size={18} />
-            <div>
-              <h2 id={titleId}>预演完成——未删除任何数据</h2>
-              <div className="sub">引擎对计划 #{session.planId} 将执行的操作预览</div>
-            </div>
-          </div>
-          <div className="modal-body"><SessionItemsTable session={session} /></div>
-          <div className="modal-foot">
-            <button className="btn" onClick={close}>关闭</button>
-            <button className="btn danger" data-autofocus onClick={setStep}>
-              <Play size={14} /> 继续执行
-            </button>
-          </div>
-        </>
-      )}
-    </ModalFrame>
-  );
-}
-
 /* ---- 4. escalating confirm ------------------------------------------ */
 
 function ConfirmDialog() {
   const plan = useCleanupStore((s) => s.plan);
+  const planContext = useCleanupStore((s) => s.planContext);
   const policy = useCleanupStore((s) => s.policy);
+  const busy = useCleanupStore((s) => s.busy);
   const execute = useCleanupStore((s) => s.execute);
   const close = useCleanupStore((s) => s.close);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const back = () => useCleanupStore.setState({ step: "dry-run-review" });
+  const scanGeneration = useScanStore((s) => s.generation);
   if (!plan || plan.items.length === 0) return null;
 
+  const selectedIds = useSelectionStore((s) => s.selected);
+  const impact = summarizePlanImpact(plan, planContext, scanGeneration, [...selectedIds], policy);
   const { redownload, review } = confirmBreakdown(plan);
-  const needsRedownload = redownload > 0 && policy === "default";
-  const needsReview = review > 0 && (policy === "default" || policy === "redownload");
+  const finalAction = finalActionLabel(impact);
+  // Risk consequences are always shown. `policy` only controls the backend
+  // authorisation gate and must not hide the actual impact of this plan.
+  const needsRedownload = redownload > 0;
+  const needsReview = review > 0;
 
   return (
-    <ModalFrame onDismiss={close}>
-      {(titleId) => (
+    <ModalFrame onDismiss={close} initialFocusRef={cancelRef}>
+      {({ titleId, descriptionId }) => (
         <>
           <div className="modal-head">
             <ShieldAlert size={18} style={{ color: "var(--risk-review)" }} />
             <div>
-              <h2 id={titleId}>确认执行清理？</h2>
-              <div className="sub">{plan.items.length} 项 · {formatBytes(plan.totalEstimatedBytes)} · 策略「{policyLabel(policy)}」</div>
+              <h2 id={titleId}>确认最终清理</h2>
+              <div id={descriptionId} className="sub">{finalAction} · 逻辑大小估计 {formatBytes(plan.totalEstimatedBytes)} · 策略「{policyLabel(policy)}」</div>
             </div>
           </div>
           <div className="modal-body">
+            <ImpactSummaryPanel summary={impact} />
             {needsRedownload && (
               <div className="confirm-note redownload">
                 <Download size={16} />
-                <span><b>{redownload} 项删除后需重新下载。</b> 下次安装时会从网络重新下载 {formatBytes(bytesOfConfirmation(plan, "redownload"))}；不会损坏工具，但会花费时间和带宽。</span>
+                <span><b>{redownload} 项具有重新下载成本。</b> 当前占用估计 {formatBytes(bytesOfConfirmation(plan, "redownload"))}；下次使用需要联网重新下载，实际流量和耗时取决于使用内容。</span>
               </div>
             )}
             {needsReview && (
@@ -477,15 +377,20 @@ function ConfirmDialog() {
             {!needsRedownload && !needsReview && (
               <div className="confirm-note redownload">
                 <CheckCircle2 size={16} />
-                <span>本计划仅包含低风险候选。执行前 CleanupEngine 仍会重新验证对象与安全边界。</span>
+                <span>本计划没有需重新下载或人工确认的条目；这只是适用集合的授权提示，不代表零影响。执行前 CleanupEngine 仍会重新验证对象与安全边界。</span>
               </div>
             )}
           </div>
           <div className="modal-foot">
             <button className="btn" onClick={back}>返回预演</button>
-            <button className="btn" onClick={close}>取消</button>
-            <button className="btn danger" data-autofocus onClick={() => void execute()}>
-              <Play size={14} /> 执行（{formatBytes(plan.totalEstimatedBytes)}）
+            <button ref={cancelRef} className="btn" onClick={close}>取消</button>
+            <button
+              className="btn danger"
+              disabled={busy || !impact.contextValid}
+              title={impact.contextIssue ?? "执行当前清理计划"}
+              onClick={() => void execute()}
+            >
+              <Play size={14} /> {finalAction}
             </button>
           </div>
         </>
@@ -518,18 +423,18 @@ function ExecutingModal() {
 
   return (
     <ModalFrame dismissible={false} className="modal-compact">
-      {(titleId) => (
+      {({ titleId, descriptionId }) => (
         <>
           <div className="modal-head">
             <Play size={18} />
             <div>
               <h2 id={titleId}>正在执行清理…</h2>
-              <div className="sub">CleanupEngine 正在处理，请勿关闭窗口</div>
+              <div id={descriptionId} className="sub">CleanupEngine 正在处理，请勿关闭窗口</div>
             </div>
           </div>
           <div className="modal-body">
             <div className="exec-progress">
-              <div className="exec-bar"><i style={{ width: "35%", animation: "sweep 1.2s linear infinite" }} /></div>
+              <div className="exec-bar" aria-hidden="true"><i /></div>
               <div className="exec-line"><span>已排队 {plan.items.length} 项</span><span>{formatBytes(plan.totalEstimatedBytes)}</span></div>
             </div>
           </div>
@@ -543,37 +448,44 @@ function ExecutingModal() {
 
 function SessionModal() {
   const session = useCleanupStore((s) => s.finalSession);
+  const plan = useCleanupStore((s) => s.plan);
+  const planContext = useCleanupStore((s) => s.planContext);
   const close = useCleanupStore((s) => s.close);
   const reload = useScanStore((s) => s.loadLatest);
+  const doneRef = useRef<HTMLButtonElement>(null);
   if (!session) return null;
 
   const okBytes = session.items.filter((item) => item.status === "ok").reduce((sum, item) => sum + item.estimatedSize, 0);
+  const impact = plan && planContext
+    ? summarizePlanImpact(plan, planContext, planContext.scanGeneration)
+    : null;
 
   return (
-    <ModalFrame onDismiss={close}>
-      {(titleId) => (
+    <ModalFrame onDismiss={close} initialFocusRef={doneRef}>
+      {({ titleId, descriptionId }) => (
         <>
           <div className="modal-head">
             <CheckCircle2 size={18} style={{ color: "var(--ok)" }} />
             <div>
-              <h2 id={titleId}>清理完成——会话 #{session.sessionId}</h2>
-              <div className="sub">成功 {session.totals.succeeded} 项 · 跳过 {session.totals.skipped} 项 · 失败 {session.totals.failed} 项</div>
+              <h2 id={titleId}>清理完成——计划 #{session.planId} 的结果</h2>
+              <div id={descriptionId} className="sub">会话 #{session.sessionId} · 原扫描代次 {planContext?.scanGeneration ?? "未知"} · 成功 {session.totals.succeeded} 项 · 跳过 {session.totals.skipped} 项 · 失败 {session.totals.failed} 项</div>
             </div>
           </div>
           <div className="modal-body">
             <div className="session-report">
               <div className="totals-grid">
-                <div className="total-cell good"><div className="k">已释放</div><div className="v">{formatBytes(okBytes)}</div></div>
-                <div className="total-cell"><div className="k">计划清理</div><div className="v">{formatBytes(session.totals.plannedBytes)}</div></div>
+                <div className="total-cell good"><div className="k">成功处理估计</div><div className="v">{formatBytes(okBytes)}</div></div>
+                <div className="total-cell"><div className="k">计划处理估计</div><div className="v">{formatBytes(session.totals.plannedBytes)}</div></div>
                 <div className="total-cell warn"><div className="k">已跳过</div><div className="v">{formatCount(session.totals.skipped)}</div></div>
                 <div className="total-cell bad"><div className="k">失败</div><div className="v">{formatCount(session.totals.failed)}</div></div>
               </div>
               {session.journalDegraded && <div className="journal-flag"><XCircle size={15} /> 日志降级——本次会话记录不完整（请检查日志目录）。</div>}
+              {impact && <ImpactSummaryPanel summary={impact} />}
               <SessionItemsTable session={session} />
             </div>
           </div>
           <div className="modal-foot">
-            <button className="btn primary" data-autofocus onClick={() => { void reload(); close(); }}>完成</button>
+            <button ref={doneRef} className="btn primary" onClick={() => { void reload(); close(); }}>完成</button>
           </div>
         </>
       )}
@@ -585,15 +497,15 @@ function SessionItemsTable({ session }: { session: NonNullable<ReturnType<typeof
   return (
     <div className="mini-table">
       <table className="mini">
-        <thead><tr><th>条目</th><th>操作</th><th>结果</th><th className="num">大小</th></tr></thead>
+        <thead><tr><th>条目</th><th>操作</th><th>结果</th><th className="num">逻辑大小估计</th></tr></thead>
         <tbody>
           {session.items.map((item) => (
             <tr key={item.scanItemId}>
               <td className="mono" title={item.path}>{item.path}</td>
-              <td>{actionLabel(item.action)}</td>
+              <td><PresentationText presentation={actionPresentation(item.action)} /></td>
               <td>
                 <StatusBadge status={item.status} />
-                {item.detail && <span className="session-detail" title={item.detail}>{sessionItemDetail(item.detail)}</span>}
+                {item.detail && <PresentationText className="session-detail" presentation={reasonPresentation(item.detail)} />}
               </td>
               <td className="num">{formatBytes(item.estimatedSize)}</td>
             </tr>
@@ -604,28 +516,78 @@ function SessionItemsTable({ session }: { session: NonNullable<ReturnType<typeof
   );
 }
 
+function ImpactSummaryPanel({ summary }: { summary: PlanImpactSummary }) {
+  const actions = [
+    `永久删除 ${summary.actions.permanentDelete} 项`,
+    `执行工具清理 ${summary.actions.toolCleanup} 项`,
+    summary.actions.unrecognized > 0 && `未识别动作 ${summary.actions.unrecognized} 项`,
+  ].filter(Boolean).join(" · ");
+  const impacts = [
+    `低风险候选 ${summary.risks.safe.count} 项（${formatBytes(summary.risks.safe.bytes)}）`,
+    `本地重建 ${summary.risks.regenerableLocal.count} 项（${formatBytes(summary.risks.regenerableLocal.bytes)}）`,
+    `需重新下载 ${summary.risks.regenerableDownload.count} 项（${formatBytes(summary.risks.regenerableDownload.bytes)}）`,
+    `可能失去历史 ${summary.risks.review.count} 项（${formatBytes(summary.risks.review.bytes)}）`,
+    summary.risks.unmatched.count > 0 && `风险未匹配 ${summary.risks.unmatched.count} 项`,
+  ].filter(Boolean).join(" · ");
+  const authorization = [
+    summary.authorization.none > 0 && `无需额外风险授权 ${summary.authorization.none} 项`,
+    summary.authorization.redownload > 0 && `需重新下载授权 ${summary.authorization.redownload} 项`,
+    summary.authorization.review > 0 && `需人工确认授权 ${summary.authorization.review} 项`,
+    summary.authorization.unrecognized > 0 && `未识别确认级别 ${summary.authorization.unrecognized} 项`,
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <div className="plan-impact-summary" role={summary.contextValid ? "status" : "alert"}>
+      <div><b>处理对象</b> {summary.itemCount} 项 · 逻辑大小估计 {formatBytes(summary.estimatedBytes)}</div>
+      <div><b>处理方式</b> {actions || "—"}</div>
+      <div><b>影响与恢复成本</b> {impacts || "未能匹配风险信息"}</div>
+      <div><b>授权要求</b> {authorization || "—"}</div>
+      {!summary.contextValid && <strong>{summary.contextIssue ?? "计划上下文不完整，请重新生成"}</strong>}
+    </div>
+  );
+}
+
 /* ---- error ---------------------------------------------------------- */
 
 function ErrorModal() {
   const error = useCleanupStore((s) => s.error);
   const close = useCleanupStore((s) => s.close);
+  const closeRef = useRef<HTMLButtonElement>(null);
   if (!error) return null;
 
   return (
-    <ModalFrame onDismiss={close} className="modal-error">
-      {(titleId) => (
+    <ModalFrame onDismiss={close} className="modal-error" initialFocusRef={closeRef}>
+      {({ titleId, descriptionId }) => (
         <>
           <div className="modal-head">
             <XCircle size={18} style={{ color: "var(--danger)" }} />
-            <div><h2 id={titleId}>清理失败</h2><div className="sub code">{error.code}</div></div>
+            <div><h2 id={titleId}>清理失败</h2><div id={descriptionId} className="sub code">{error.code}</div></div>
           </div>
           <div className="modal-body">
             <p className="error-copy">{error.message}</p>
-            {error.required && <p className="error-required">本计划需要 <b>{confirmLabel(error.required)}</b> 级别的确认。请提高策略级别后重试。</p>}
+            {error.required && (
+              <p className="error-required">
+                本计划需要 <b><PresentationText presentation={confirmationPresentation(error.required)} /></b> 级别的确认。请提高策略级别后重试。
+              </p>
+            )}
           </div>
-          <div className="modal-foot"><button className="btn" data-autofocus onClick={close}>关闭</button></div>
+          <div className="modal-foot"><button ref={closeRef} className="btn" onClick={close}>关闭</button></div>
         </>
       )}
     </ModalFrame>
+  );
+}
+
+function PresentationText({
+  presentation,
+  className,
+}: {
+  presentation: CleanupPresentation;
+  className?: string;
+}) {
+  return (
+    <span className={className} title={presentationTitle(presentation)}>
+      {presentationLabel(presentation)}
+    </span>
   );
 }

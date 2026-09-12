@@ -28,6 +28,7 @@ use crate::CleanOptions;
 /// Runs the clean subcommand.
 pub fn run(opts: CleanOptions) -> Result<(), String> {
     let base = support::data_dir()?;
+    let _operation_lock = support::acquire_app_operation_lock(&base)?;
     let policy = support::policy_from(opts.confirm_redownload, opts.confirm_review, opts.yes);
 
     match (opts.plan, opts.safe) {

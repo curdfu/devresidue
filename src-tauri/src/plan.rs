@@ -40,6 +40,9 @@ pub fn create_cleanup_plan(
     policy: ConfirmPolicyArg,
     scan_generation: Option<u64>,
 ) -> Result<CleanupPlanDto, CommandError> {
+    let _operation = state
+        .begin_operation("create-plan")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let model = state.model.lock().unwrap();
     let snapshot = model.latest().ok_or_else(|| {
         CommandError::new(
@@ -141,8 +144,12 @@ pub async fn execute_cleanup_plan(
     policy: ConfirmPolicyArg,
     dry_run: bool,
 ) -> Result<CleanupSessionDto, CommandError> {
+    let operation = state
+        .begin_operation(if dry_run { "dry-run" } else { "execute-cleanup" })
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = state.model.lock().unwrap().data_dir().to_path_buf();
     tauri::async_runtime::spawn_blocking(move || {
+        let _operation = operation;
         execute_plan(&data_dir, Some(&app), plan_id, policy, dry_run)
     })
     .await

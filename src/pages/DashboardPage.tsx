@@ -1,35 +1,23 @@
 import { useMemo } from "react";
 import { ChevronRight, Radar, Sparkles } from "lucide-react";
-import type { ResidueCategory, RiskLevel } from "@/types";
+import type { RiskLevel } from "@/types";
 import { useScanStore } from "@/stores/scanStore";
 import { useUiStore } from "@/stores/uiStore";
-import { useRiskGroups } from "@/hooks/useScanView";
 import { formatBytes, formatCount, riskMeta } from "@/utils/format";
 import { BACKEND_KIND } from "@/App";
+import { familySummary, riskSummary, type PresentationFamily } from "@/selectors/scanPresentation";
+import { defaultScope, useSettingsStore } from "@/stores/settingsStore";
 
 interface FaceRow {
   name: string;
-  categories: ResidueCategory[];
+  family: PresentationFamily;
 }
 
 /** Storage faces (SPEC §27 dashboard): agents / caches / artifacts / other. */
 const FACES: FaceRow[] = [
-  {
-    name: "AI Agents",
-    categories: ["ai-agent", "session", "workspace-state", "temporary"],
-  },
-  {
-    name: "开发缓存",
-    categories: ["developer-cache", "package-cache"],
-  },
-  {
-    name: "项目产物",
-    categories: ["build-artifact", "dependency"],
-  },
-  {
-    name: "受保护与未知",
-    categories: ["credential", "unknown", "configuration"],
-  },
+  { name: "Agent 数据", family: "agents" },
+  { name: "工具数据", family: "tools" },
+  { name: "项目产物", family: "projects" },
 ];
 
 const CLEANUP_RISKS: RiskLevel[] = [
@@ -45,37 +33,43 @@ export function DashboardPage() {
   const items = useScanStore((s) => s.items);
   const phase = useScanStore((s) => s.phase);
   const startScan = useScanStore((s) => s.startScan);
+  const workspaceRoots = useSettingsStore((s) => s.workspaceRoots);
+  const workspaceRootsMode = useSettingsStore((s) => s.workspaceRootsMode);
   const setPage = useUiStore((s) => s.setPage);
   const setRiskFilter = useUiStore((s) => s.setRiskFilter);
 
-  const groups = useRiskGroups(items);
+  const groups = riskSummary(items);
+  const families = familySummary(items);
   const total = useMemo(() => items.reduce((sum, item) => sum + item.logical_size, 0), [items]);
   const lowRisk = groups.get("safe") ?? { bytes: 0, count: 0 };
 
   if (phase === "idle" && items.length === 0) {
     return (
-      <div className="page-body dashboard-empty">
-        <div className="empty">
-          <Radar size={34} strokeWidth={1.3} />
-          <h3>尚未扫描</h3>
-          <p>
-            扫描后将看到 AI Agent、开发缓存与构建产物分别占用了多少空间——
-            每一项都附带风险等级与删除影响说明。
-          </p>
-          <button className="btn primary btn-lg" onClick={() => void startScan({ kind: "default" })}>
-            <Radar size={14} /> 开始扫描
-          </button>
-          {BACKEND_KIND === "mock" && (
-            <button
-              className="btn"
-              onClick={() => void startScan({ kind: "default" })}
-              title="演示模式下使用内置示例数据"
-            >
-              <Sparkles size={13} /> 使用演示数据
+      <>
+        <DashboardHeading />
+        <div className="page-body dashboard-empty">
+          <div className="empty">
+            <Radar size={34} strokeWidth={1.3} />
+            <h2>尚未扫描</h2>
+            <p>
+              扫描后将看到 AI Agent、开发缓存与构建产物分别有多少逻辑大小估计——
+              每一项都附带风险等级与删除影响说明。
+            </p>
+            <button className="btn primary btn-lg" onClick={() => void startScan(defaultScope(workspaceRootsMode, workspaceRoots))}>
+              <Radar size={14} /> 开始扫描
             </button>
-          )}
+            {BACKEND_KIND === "mock" && (
+              <button
+                className="btn"
+                onClick={() => void startScan(defaultScope(workspaceRootsMode, workspaceRoots))}
+                title="演示模式下使用内置示例数据"
+              >
+                <Sparkles size={13} /> 使用演示数据
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
@@ -111,11 +105,13 @@ export function DashboardPage() {
   };
 
   return (
-    <div className="page-body">
+    <>
+      <DashboardHeading />
+      <div className="page-body">
       <div className="dash">
         <section className="dash-section dash-overview" aria-labelledby="overview-title">
           <div className="dash-total">
-            <span id="overview-title" className="label">开发数据总量</span>
+            <span id="overview-title" className="label">开发数据逻辑大小估计</span>
             <span className="value">{formatBytes(total)}</span>
             <span className="meta">{formatCount(items.length)} 项 · 覆盖 Agent、缓存与项目</span>
           </div>
@@ -123,7 +119,7 @@ export function DashboardPage() {
             <div>
               <div className="dash-action-label">低风险候选</div>
               <p>
-                {formatCount(lowRisk.count)} 项 · {formatBytes(lowRisk.bytes)}；生成计划和实际执行前仍会进行安全检查。
+                {formatCount(lowRisk.count)} 项 · 逻辑大小估计 {formatBytes(lowRisk.bytes)}；生成计划和实际执行前仍会进行安全检查。
               </p>
             </div>
             <button className="btn primary dash-action" onClick={() => jump("safe")}>
@@ -159,8 +155,8 @@ export function DashboardPage() {
         <section className="dash-breakdown" aria-labelledby="distribution-title">
           <h2 id="distribution-title">空间分布</h2>
           {FACES.map((face) => {
-            const faceItems = items.filter((item) => face.categories.includes(item.category));
-            const bytes = faceItems.reduce((sum, item) => sum + item.logical_size, 0);
+            const summary = families[face.family];
+            const bytes = summary.bytes;
             const percent = total > 0 ? (bytes / total) * 100 : 0;
             return (
               <div key={face.name} className="breakdown-row">
@@ -168,11 +164,23 @@ export function DashboardPage() {
                 <div className="breakdown-bar" aria-label={`${face.name} 占 ${percent.toFixed(1)}%`}>
                   <i style={{ width: `${Math.max(percent, bytes > 0 ? 1.5 : 0)}%` }} />
                 </div>
-                <span className="size">{formatBytes(bytes)}</span>
+                <span className="size">{formatCount(summary.count)} 项 · {formatBytes(bytes)}</span>
               </div>
             );
           })}
         </section>
+      </div>
+      </div>
+    </>
+  );
+}
+
+function DashboardHeading() {
+  return (
+    <div className="page-head">
+      <div>
+        <h1 className="page-title">概览</h1>
+        <div className="page-sub">扫描结果、风险分布与清理入口</div>
       </div>
     </div>
   );
@@ -183,9 +191,9 @@ function shortHint(risk: RiskLevel): string {
     case "safe":
       return "低风险候选；执行前仍检查";
     case "regenerable-local":
-      return "可在本地重建";
+      return "下次使用可在本地重建";
     case "regenerable-download":
-      return "需要重新下载";
+      return "下次使用需联网重新下载";
     case "review":
       return "删除前请人工确认";
     case "protected":

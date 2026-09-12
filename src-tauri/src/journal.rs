@@ -5,7 +5,9 @@ use std::time::UNIX_EPOCH;
 
 use tauri::State;
 
-use crate::contract::{CommandError, ErrorCode, JournalEntryDto};
+use crate::contract::{
+    ClearJournalResultDto, CommandError, ErrorCode, JournalEntryDto, ResetScanDataResultDto,
+};
 use crate::state::AppState;
 
 /// Default number of journal entries returned when the UI omits `last_n`.
@@ -35,6 +37,9 @@ pub fn get_journal(
 /// plumbing, not history).
 #[tauri::command]
 pub fn clear_all_data(state: State<'_, AppState>) -> Result<usize, CommandError> {
+    let _operation = state
+        .begin_operation("clear-all-data")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = state.model.lock().unwrap().data_dir().to_path_buf();
 
     // 1. Journal shards.
@@ -60,6 +65,49 @@ pub fn clear_all_data(state: State<'_, AppState>) -> Result<usize, CommandError>
     state.model.lock().unwrap().reset();
 
     Ok(cleared)
+}
+
+/// Clears only DevResidue-owned journal shards. Scan snapshots, plans, rules,
+/// preferences and AI profile metadata remain intact.
+#[tauri::command]
+pub fn clear_journal(state: State<'_, AppState>) -> Result<ClearJournalResultDto, CommandError> {
+    let _operation = state
+        .begin_operation("clear-journal")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
+    let data_dir = state.model.lock().unwrap().data_dir().to_path_buf();
+    let removed_shard_count = devresidue_core::journal::clear_all(&data_dir)
+        .map_err(|e| CommandError::new(ErrorCode::Engine, e.to_string()))?;
+    Ok(ClearJournalResultDto {
+        removed_shard_count,
+    })
+}
+
+/// Resets only the latest scan and persisted cleanup plans. The journal,
+/// rules, preferences and monotonic plan/generation counters remain intact.
+#[tauri::command]
+pub fn reset_scan_data(state: State<'_, AppState>) -> Result<ResetScanDataResultDto, CommandError> {
+    let _operation = state
+        .begin_operation("reset-scan-data")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
+    let data_dir = state.model.lock().unwrap().data_dir().to_path_buf();
+    let snapshot = devresidue_providers::scan_store::snapshot_path(&data_dir);
+    let had_snapshot = snapshot.is_file();
+    if had_snapshot {
+        std::fs::remove_file(&snapshot)
+            .map_err(|e| CommandError::new(ErrorCode::Engine, format!("remove snapshot: {e}")))?;
+    }
+
+    let plan_store = devresidue_core::cleanup::plan_store::PlanStore::open_at(&data_dir)
+        .map_err(|e| CommandError::new(ErrorCode::Engine, e.to_string()))?;
+    let removed_plan_count = plan_store
+        .clear_plans()
+        .map_err(|e| CommandError::new(ErrorCode::Engine, e.to_string()))?;
+
+    state.model.lock().unwrap().reset();
+    Ok(ResetScanDataResultDto {
+        removed_plan_count,
+        had_snapshot,
+    })
 }
 
 /// Maps one journal record onto the UI DTO (epoch seconds for the timestamp;

@@ -2,12 +2,16 @@ import { useState } from "react";
 import {
   FolderOpen,
   EyeOff,
+  Sparkles,
   ShieldCheck,
   X,
 } from "lucide-react";
 import type { ScanItemDto } from "@/types";
 import { getBackend } from "@/adapters";
 import { useUnknownWorkflowStore } from "@/stores/unknownWorkflowStore";
+import { useUiStore } from "@/stores/uiStore";
+import { useScanStore } from "@/stores/scanStore";
+import { useAiStore } from "@/stores/aiStore";
 
 /**
  * The Unknown item's disposition toolkit (SPEC §25): Open Folder / Ignore /
@@ -21,6 +25,9 @@ import { useUnknownWorkflowStore } from "@/stores/unknownWorkflowStore";
  */
 export function UnknownActions({ item }: { item: ScanItemDto }) {
   const applying = useUnknownWorkflowStore((s) => s.applying.has(item.id));
+  const setPage = useUiStore((s) => s.setPage);
+  const generation = useScanStore((s) => s.generation);
+  const setReturnContext = useAiStore((s) => s.setReturnContext);
 
   const [confirming, setConfirming] = useState<null | "ignore" | "protect">(null);
   const [openErr, setOpenErr] = useState<string | null>(null);
@@ -57,6 +64,22 @@ export function UnknownActions({ item }: { item: ScanItemDto }) {
           title="永不清理，始终受保护"
         >
           <ShieldCheck size={12} /> 保护
+        </button>
+        <button
+          className="btn small ghost"
+          onClick={() => {
+            setReturnContext({
+              sourcePage: "unknown",
+              sourceView: item.risk === "review" ? "review" : "unknown",
+              itemIds: [item.id],
+              scanGeneration: generation,
+            });
+            setPage("ai-review");
+          }}
+          disabled={busy}
+          title="仅将当前条目带入联网 AI 研判候选，不会自动发送"
+        >
+          <Sparkles size={12} /> 使用 AI 辅助判断
         </button>
       </div>
 

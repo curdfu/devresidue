@@ -31,7 +31,7 @@ export function EmptyScanState() {
       <Radar size={30} strokeWidth={1.4} />
       <h3>尚未扫描</h3>
       <p>
-        运行一次扫描，即可查看 AI Agent、开发缓存与构建产物分别占用了多少空间——
+        运行一次扫描，即可查看 AI Agent、开发缓存与构建产物分别有多少逻辑大小估计——
         每一项都附带风险等级与删除影响说明。
       </p>
       <button className="btn primary" onClick={() => void startScan({ kind: "default" })}>

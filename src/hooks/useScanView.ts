@@ -1,16 +1,12 @@
 import { useMemo } from "react";
-import type { ResidueCategory, RiskLevel, ScanItemDto, SubtabDef } from "@/types";
+import type { ItemFilter, RiskLevel, ScanItemDto, SubtabDef } from "@/types";
 import { isSelectable } from "@/utils/format";
+import { familyOfItem } from "@/selectors/scanPresentation";
 
 /** Per-page filter derivation (category faces + optional subtabs). */
 export function useFilteredItems(
   items: ScanItemDto[],
-  filter: {
-    kind: "category" | "risk";
-    categories?: ResidueCategory[];
-    risk?: RiskLevel;
-    subtabs?: SubtabDef[];
-  },
+  filter: ItemFilter,
   activeSubtab: string | null,
   riskFilter: string | null,
 ): { items: ScanItemDto[]; subtabs: SubtabDef[] } {
@@ -18,6 +14,9 @@ export function useFilteredItems(
     let list = items;
     if (filter.kind === "category" && filter.categories) {
       list = list.filter((it) => filter.categories?.includes(it.category));
+    }
+    if (filter.kind === "family") {
+      list = list.filter((it) => familyOfItem(it) === filter.family);
     }
     if (filter.kind === "risk" && filter.risk) {
       list = list.filter((it) => it.risk === filter.risk);
@@ -51,7 +50,7 @@ export interface SelectionApi {
   selected: Set<number>;
   toggle: (id: number) => void;
   selectAll: (items: ScanItemDto[]) => void;
-  clear: () => void;
+  clear: (items: ScanItemDto[]) => void;
   /** Selectable ids among a list (PROTECTED / UNKNOWN excluded). */
   eligible: (items: ScanItemDto[]) => number[];
 }
@@ -68,10 +67,19 @@ export function selectionOf(
         if (next.has(id)) next.delete(id);
         else next.add(id);
         return next;
-      }),
+    }),
     selectAll: (items) =>
-      setSelected(() => new Set(items.filter((it) => isSelectable(it.risk)).map((it) => it.id))),
-    clear: () => setSelected(() => new Set<number>()),
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const id of items.filter((it) => isSelectable(it.risk)).map((it) => it.id)) next.add(id);
+        return next;
+      }),
+    clear: (items) =>
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const id of items.filter((it) => isSelectable(it.risk)).map((it) => it.id)) next.delete(id);
+        return next;
+      }),
     eligible: (items) => items.filter((it) => isSelectable(it.risk)).map((it) => it.id),
   };
 }

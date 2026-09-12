@@ -17,6 +17,8 @@ import { RiskBadge } from "./common";
 type Props = {
   items: ScanItemDto[];
   generation: number;
+  /** Optional IDs carried from a specific Unknown/Review detail entry. */
+  candidateItemIds?: number[];
 };
 
 /**
@@ -24,7 +26,7 @@ type Props = {
  * explicit metadata-send consent. Suggestions stay local until the user
  * chooses a concrete final risk and confirms selected IDs.
  */
-export function AiReviewPanel({ items, generation }: Props) {
+export function AiReviewPanel({ items, generation, candidateItemIds }: Props) {
   const masterEnabled = useAiStore((state) => state.masterEnabled);
   const profiles = useAiStore((state) => state.profiles);
   const loaded = useAiStore((state) => state.loaded);
@@ -58,14 +60,26 @@ export function AiReviewPanel({ items, generation }: Props) {
   }, [loadProfiles]);
 
   useEffect(() => {
-    setSelectedCandidateIds(new Set());
+    const scopedIds = candidateItemIds ? new Set(candidateItemIds) : null;
+    setSelectedCandidateIds(
+      scopedIds
+        ? new Set(items.filter((item) => scopedIds.has(item.id)).map((item) => item.id))
+        : new Set(),
+    );
     setConfirmLowRisk(false);
     setIncludePaths(false);
-  }, [generation]);
+  }, [candidateItemIds, generation, items]);
 
   const candidates = useMemo(
-    () => items.filter((item) => item.risk === "unknown" || item.risk === "review"),
-    [items],
+    () => {
+      const scopedIds = candidateItemIds ? new Set(candidateItemIds) : null;
+      return items.filter(
+        (item) =>
+          (item.risk === "unknown" || item.risk === "review") &&
+          (!scopedIds || scopedIds.has(item.id)),
+      );
+    },
+    [candidateItemIds, items],
   );
   const byId = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const activeProfile = profiles.find((profile) => profile.isActive) ?? null;
@@ -74,6 +88,11 @@ export function AiReviewPanel({ items, generation }: Props) {
   const batchProfile = preparedBatch
     ? profiles.find((profile) => profile.id === preparedBatch.profileId) ?? null
     : activeProfile;
+  const reviewStage = !preparedBatch
+    ? "select"
+    : suggestions.length === 0
+      ? "consent"
+      : "review";
 
   const toggleCandidate = (itemId: number) => {
     setSelectedCandidateIds((current) => {
@@ -101,7 +120,11 @@ export function AiReviewPanel({ items, generation }: Props) {
   };
 
   return (
-    <section className="settings-card ai-review-panel" aria-labelledby="ai-review-heading">
+    <section
+      className="settings-card ai-review-panel"
+      aria-labelledby="ai-review-heading"
+      aria-describedby={error ? "ai-review-error" : undefined}
+    >
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
         <Sparkles size={17} style={{ marginTop: 2, color: "var(--accent)" }} />
         <div>
@@ -113,10 +136,16 @@ export function AiReviewPanel({ items, generation }: Props) {
         </div>
       </div>
 
+      <div className="ai-step-rail" aria-label="AI 研判步骤">
+        <AiStep active={reviewStage === "select"} complete={reviewStage !== "select"} index="1" label="选择条目" />
+        <AiStep active={reviewStage === "consent"} complete={reviewStage === "review"} index="2" label="确认发送内容" />
+        <AiStep active={reviewStage === "review"} complete={false} index="3" label="复核建议" />
+      </div>
+
       {error && (
-        <div className="unknown-err" role="alert" style={{ marginTop: 10 }}>
+        <div id="ai-review-error" className="unknown-err" role="alert" style={{ marginTop: 10 }}>
           {error.message}
-          <button className="btn small ghost" style={{ marginLeft: 8 }} onClick={dismissError}>
+          <button type="button" className="btn small ghost" style={{ marginLeft: 8 }} onClick={dismissError}>
             <X size={11} /> 关闭
           </button>
         </div>
@@ -156,8 +185,9 @@ export function AiReviewPanel({ items, generation }: Props) {
           }}
         />
       ) : (
-        <CandidateStage
-          candidates={candidates}
+          <CandidateStage
+            candidates={candidates}
+            scoped={Boolean(candidateItemIds)}
           selectedCandidateIds={selectedCandidateIds}
           toggleCandidate={toggleCandidate}
           allCandidatesSelected={allCandidatesSelected}
@@ -181,6 +211,7 @@ export function AiReviewPanel({ items, generation }: Props) {
 
 function CandidateStage({
   candidates,
+  scoped,
   selectedCandidateIds,
   toggleCandidate,
   allCandidatesSelected,
@@ -193,6 +224,7 @@ function CandidateStage({
   onPrepare,
 }: {
   candidates: ScanItemDto[];
+  scoped: boolean;
   selectedCandidateIds: Set<number>;
   toggleCandidate: (itemId: number) => void;
   allCandidatesSelected: boolean;
@@ -210,17 +242,22 @@ function CandidateStage({
         当前配置：<b>{activeProfile.name}</b> · {activeProfile.model} · {activeProfile.baseUrl}
       </div>
       {candidates.length === 0 ? (
-        <p className="ai-advisor-hint">当前扫描没有 Unknown 或 Review 条目可提交研判。</p>
+        <p className="ai-advisor-hint">
+          {scoped
+            ? "带入的条目已不在当前扫描，或不再属于 Unknown / Review；请返回待判断页面重新选择。"
+            : "当前扫描没有 Unknown 或 Review 条目可提交研判。"}
+        </p>
       ) : (
         <>
-          <label className="ai-advisor-hint" style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, cursor: "pointer" }}>
-            <input type="checkbox" checked={allCandidatesSelected} onChange={toggleAllCandidates} disabled={preparing} />
+          <label htmlFor="ai-candidate-select-all" className="ai-advisor-hint" style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, cursor: "pointer" }}>
+            <input id="ai-candidate-select-all" type="checkbox" checked={allCandidatesSelected} onChange={toggleAllCandidates} disabled={preparing} />
             {allCandidatesSelected ? "取消全选" : "全选当前可研判条目"}（{candidates.length}）
           </label>
           <div style={{ display: "grid", gap: 5, marginBottom: 10 }}>
             {candidates.map((item) => (
-              <label key={item.id} className="root-row" style={{ cursor: "pointer", gap: 8 }}>
+              <label htmlFor={`ai-candidate-${item.id}`} key={item.id} className="root-row" style={{ cursor: "pointer", gap: 8 }}>
                 <input
+                  id={`ai-candidate-${item.id}`}
                   type="checkbox"
                   checked={selectedCandidateIds.has(item.id)}
                   onChange={() => toggleCandidate(item.id)}
@@ -234,8 +271,9 @@ function CandidateStage({
               </label>
             ))}
           </div>
-          <label className="confirm-note review" style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10, cursor: "pointer" }}>
+          <label htmlFor="ai-include-paths" className="confirm-note review" style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10, cursor: "pointer" }}>
             <input
+              id="ai-include-paths"
               type="checkbox"
               checked={includePaths}
               disabled={preparing}
@@ -316,7 +354,7 @@ function ReviewStage({
                   {entry.zone} · 深度 {entry.relativeDepth} · {entry.sourceKind} · {entry.categoryHint}
                 </div>
                 <div style={{ color: "var(--text-mute)", fontSize: 11.5 }}>
-                  产品：{entry.productHint ?? "—"} · 大小：{entry.sizeBucket} · 时间：{entry.ageBucket}
+                  产品：{entry.productHint ?? "—"} · 大小档位：{entry.sizeBucket} · 时间：{entry.ageBucket}
                 </div>
                 <div style={{ color: "var(--text-mute)", fontSize: 11.5 }}>信号：{entry.signals.join("、")}</div>
                 {preparedBatch.includesPaths && (
@@ -363,6 +401,7 @@ function ReviewStage({
           return (
             <div key={suggestion.itemId} className="root-row" style={{ alignItems: "flex-start", gap: 9 }}>
               <input
+                id={`ai-suggestion-${suggestion.itemId}`}
                 type="checkbox"
                 checked={checked}
                 disabled={!finalRisk || !finalCategory || confirming}
@@ -380,9 +419,10 @@ function ReviewStage({
                 <p style={{ margin: "5px 0 0", color: "var(--text-mute)", fontSize: 12 }}>{suggestion.reason}</p>
               </div>
               <div style={{ display: "grid", gap: 7, minWidth: 142 }}>
-                <label style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 11.5 }}>
+                <label htmlFor={`ai-final-risk-${suggestion.itemId}`} style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 11.5 }}>
                   最终风险
                   <select
+                    id={`ai-final-risk-${suggestion.itemId}`}
                     value={finalRisk ?? ""}
                     disabled={confirming}
                     onChange={(event) => {
@@ -395,9 +435,10 @@ function ReviewStage({
                     ))}
                   </select>
                 </label>
-                <label style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 11.5 }}>
+                <label htmlFor={`ai-final-category-${suggestion.itemId}`} style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 11.5 }}>
                   最终类别
                   <select
+                    id={`ai-final-category-${suggestion.itemId}`}
                     value={finalCategory ?? ""}
                     disabled={confirming}
                     onChange={(event) => {
@@ -415,9 +456,9 @@ function ReviewStage({
           );
         })}
       </div>
-      <button className="btn small primary" disabled={confirming || selectedSuggestionIds.size === 0} onClick={onRequestConfirmation}>
+      <button type="button" className="btn small primary" disabled={confirming || selectedSuggestionIds.size === 0} onClick={onRequestConfirmation}>
         {confirming ? <LoaderCircle size={12} className="spin" /> : <CheckCircle2 size={12} />}
-        确认选中的本地分类规则（{selectedSuggestionIds.size}）
+        保存为用户规则（{selectedSuggestionIds.size} 项）
       </button>
 
       {lowRiskWarningVisible && (
@@ -425,13 +466,13 @@ function ReviewStage({
           <div style={{ display: "flex", gap: 8 }}>
             <AlertTriangle size={15} style={{ flex: "none", marginTop: 2 }} />
             <span>
-              <b>确认低风险分类？</b> 后续 <code>clean --safe</code> 可能会选中标为“安全”或“本地可重建”的条目，
+              <b>确认低风险分类？</b> 后续 <code>clean --safe</code> 可能会选中标为“低风险候选”或“本地可重建”的条目，
               但仍必须经过清理计划、人工确认和 TOCTOU 重新验证；此操作本身不会删除数据。
             </span>
           </div>
           <div style={{ display: "flex", gap: 8, alignSelf: "flex-end" }}>
-            <button className="btn small ghost" onClick={closeLowRisk}>返回检查</button>
-            <button className="btn small primary" onClick={onConfirmLowRisk}>确认创建本地规则</button>
+            <button type="button" className="btn small ghost" onClick={closeLowRisk}>返回检查</button>
+            <button type="button" className="btn small primary" onClick={onConfirmLowRisk}>保存为用户规则</button>
           </div>
         </div>
       )}
@@ -442,10 +483,29 @@ function ReviewStage({
 function ConfirmationNotice({ result }: { result: AiConfirmResultDto }) {
   return (
     <div className="confirm-note review" style={{ marginTop: 10, flexDirection: "column", alignItems: "flex-start" }}>
-      <div><CheckCircle2 size={15} /> 已确认 {result.confirmedCount} 条本地分类规则。</div>
+      <div><CheckCircle2 size={15} /> 已保存 {result.confirmedCount} 条用户规则。</div>
       <span>这不会创建清理计划或删除数据；后续仍需经过既有的计划、确认与 TOCTOU 复核。</span>
       {result.auditWarning && <span>审计记录不可用，但规则事务已完成。</span>}
     </div>
+  );
+}
+
+function AiStep({
+  active,
+  complete,
+  index,
+  label,
+}: {
+  active: boolean;
+  complete: boolean;
+  index: string;
+  label: string;
+}) {
+  return (
+    <span className={`ai-step ${active ? "active" : ""} ${complete ? "complete" : ""}`}>
+      <span className="ai-step-index">{complete ? "✓" : index}</span>
+      <span>{label}</span>
+    </span>
   );
 }
 

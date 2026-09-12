@@ -24,6 +24,9 @@ import type {
   ScanScope,
   ScanSnapshotDto,
   SessionItemDto,
+  AppDataInfoDto,
+  ScanScopePreviewDto,
+  WorkspaceRootValidationDto,
 } from "@/types";
 import type { Backend } from "./backend";
 import { toCommandError } from "./backend";
@@ -52,10 +55,11 @@ const KiB = 1024;
 let nextId = 1;
 const id = () => nextId++;
 
-type MockItem = Omit<ScanItemDto, "id">;
+type MockItem = Omit<ScanItemDto, "id" | "classification_rule_id"> &
+  Partial<Pick<ScanItemDto, "classification_rule_id">>;
 
 function item(base: MockItem): ScanItemDto {
-  return { id: id(), ...base };
+  return { id: id(), classification_rule_id: null, ...base };
 }
 
 /** Full "default scope" data set (agents + dev cache + projects). */
@@ -73,7 +77,7 @@ function defaultItems(): ScanItemDto[] {
       file_count: 284_310,
       last_modified: daysAgo(2),
       explanation:
-        "npm package download cache. Deleting frees 22.2 GiB; future installs re-download every package from the registry. Cleaned via the tool-native command (npm cache clean --force), not a raw delete.",
+        "npm package download cache. Current logical size estimate: 22.2 GiB; next use may require packages to be downloaded again. Actual traffic depends on the packages used. Cleaned via the tool-native command (npm cache clean --force), not a raw delete.",
       cleanup_action: {
         kind: "external-command",
         command: {
@@ -107,7 +111,7 @@ function defaultItems(): ScanItemDto[] {
       file_count: 61_204,
       last_modified: daysAgo(6),
       explanation:
-        "pip wheel/HTTP download cache. Safe to remove; packages re-download on next pip install. 1.9 GiB reclaimable.",
+        "pip wheel/HTTP download cache. Low-risk candidate; current logical size estimate: 1.9 GiB. Packages may need to be downloaded again on next use; actual traffic depends on the packages used.",
       cleanup_action: { kind: "direct-delete" },
       evidence: [
         {
@@ -128,7 +132,7 @@ function defaultItems(): ScanItemDto[] {
       file_count: 96_118,
       last_modified: daysAgo(9),
       explanation:
-        "Downloaded .crate files and extracted sources for every dependency cargo ever resolved. Deleting frees 4.3 GiB; the next build of each project re-downloads its crates.",
+        "Downloaded .crate files and extracted sources for dependencies cargo resolved. Current logical size estimate: 4.3 GiB; next use may require crates to be downloaded again. Actual traffic depends on the projects built.",
       cleanup_action: { kind: "direct-delete" },
       evidence: [
         {
@@ -149,7 +153,7 @@ function defaultItems(): ScanItemDto[] {
       file_count: 48_922,
       last_modified: daysAgo(1),
       explanation:
-        "uv package cache. Regenerable by re-download; 2.8 GiB. uv cache clean is the tool-native path.",
+        "uv package cache. Current logical size estimate: 2.8 GiB; next use may require packages to be downloaded again. Actual traffic depends on the packages used. uv cache clean is the tool-native path.",
       cleanup_action: {
         kind: "external-command",
         command: {
@@ -299,7 +303,7 @@ function defaultItems(): ScanItemDto[] {
       file_count: 214,
       last_modified: daysAgo(40),
       explanation:
-        "Claude Code trash/interrupt cache for one project. Safe to clean.",
+        "Claude Code trash/interrupt cache for one project. Low-risk candidate; the engine revalidates the object before cleanup.",
       cleanup_action: { kind: "recycle-bin" },
       evidence: [
         {
@@ -322,7 +326,7 @@ function defaultItems(): ScanItemDto[] {
       file_count: 19_204,
       last_modified: daysAgo(21),
       explanation:
-        "Rust incremental build output. 3.1 GiB, rebuilt locally by cargo build — no downloads involved. Moving to the recycle bin is fully reversible.",
+        "Rust incremental build output. Current logical size estimate: 3.1 GiB; next build can recreate it locally, with time depending on the project. Cleanup remains subject to final validation.",
       cleanup_action: { kind: "recycle-bin" },
       evidence: [
         {
@@ -616,6 +620,12 @@ export class MockBackend implements Backend {
     this.seedJournal();
   }
 
+  private mockWorkspaceRoots(scope: ScanScope): string[] {
+    if (scope.kind === "projects") return [...scope.roots];
+    if (scope.kind === "default" && scope.workspace_roots) return [...scope.workspace_roots];
+    return ["演示目录（Mock）"];
+  }
+
   private loadPersisted() {
     if (this.persistedLoaded) return;
     this.persistedLoaded = true;
@@ -836,7 +846,7 @@ export class MockBackend implements Backend {
       this.snapshot = {
         scanned_at: now(),
         generation: ++this.nextGeneration,
-        mode: { kind: "real", workspace_roots: ["D:\\Code"] },
+        mode: { kind: "real", workspace_roots: this.mockWorkspaceRoots(scope) },
         items: defaultItems().filter((it) => {
           switch (scope.kind) {
             case "agents":
@@ -847,6 +857,8 @@ export class MockBackend implements Backend {
               return it.source === "kondo";
             case "unknown":
               return it.risk === "unknown";
+            case "default":
+              return !(scope.workspace_roots && scope.workspace_roots.length === 0 && it.source === "kondo");
             default:
               return true;
           }
@@ -869,7 +881,9 @@ export class MockBackend implements Backend {
   }
 
   private async runScan(scanId: number, scope: ScanScope): Promise<void> {
-    const slugs = PROVIDER_SLUGS[scope.kind] ?? [];
+    const slugs = scope.kind === "default" && scope.workspace_roots?.length === 0
+      ? (PROVIDER_SLUGS.default ?? []).filter((slug) => slug !== "kondo")
+      : PROVIDER_SLUGS[scope.kind] ?? [];
     const all = defaultItems();
 
     // Scope filtering mirrors the CLI flag semantics.
@@ -884,6 +898,7 @@ export class MockBackend implements Backend {
         case "unknown":
           return it.risk === "unknown";
         case "default":
+          return !(scope.workspace_roots && scope.workspace_roots.length === 0 && it.source === "kondo");
         default:
           return true;
       }
@@ -968,7 +983,7 @@ export class MockBackend implements Backend {
     this.snapshot = {
       scanned_at: now(),
       generation: ++this.nextGeneration,
-      mode: { kind: "real", workspace_roots: ["D:\\Code"] },
+      mode: { kind: "real", workspace_roots: this.mockWorkspaceRoots(scope) },
       items: effective,
       warnings: cancelled
         ? []
@@ -1205,6 +1220,77 @@ export class MockBackend implements Backend {
   async getJournal(lastN?: number): Promise<JournalEntryDto[]> {
     const limit = lastN ?? 50;
     return this.journal.slice(-limit).reverse();
+  }
+
+  async pickWorkspaceDirectory(): Promise<string | null> {
+    // Browser demo has no native directory picker; keep the manual field
+    // authoritative and make cancellation a no-op.
+    return null;
+  }
+
+  async validateWorkspaceRoots(roots: string[]): Promise<WorkspaceRootValidationDto[]> {
+    const normalized = roots.map((input) => {
+      const value = input.trim().replace(/[\\/]+$/, "");
+      const absolute = /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+      return { input, value: value || null, absolute };
+    });
+    return normalized.map(({ input, value, absolute }, index) => {
+      const duplicate = value !== null && normalized.some((other, otherIndex) => otherIndex < index && other.value?.toLocaleLowerCase() === value.toLocaleLowerCase());
+      const containedBy = value === null ? null : normalized.slice(0, index).find((other) => other.value && value.toLocaleLowerCase().startsWith(`${other.value.toLocaleLowerCase()}\\`))?.value ?? null;
+      return {
+        input,
+        normalized: value,
+        valid: Boolean(value && absolute && !duplicate),
+        errorCode: !value ? "blank" : !absolute ? "not-absolute" : duplicate ? "duplicate" : null,
+        message: !value ? "目录不能为空" : !absolute ? "请输入绝对目录路径" : duplicate ? "与前面的目录重复" : null,
+        duplicate,
+        containedBy,
+      };
+    });
+  }
+
+  async getScanScopePreview(scope: ScanScope): Promise<ScanScopePreviewDto> {
+    const providers = scope.kind === "agents"
+      ? ["Agent 数据"]
+      : scope.kind === "dev-cache"
+        ? ["工具缓存"]
+        : scope.kind === "projects"
+          ? ["Kondo 项目"]
+          : scope.kind === "unknown"
+            ? ["未知开发数据"]
+            : scope.workspace_roots?.length === 0
+              ? ["工具缓存", "Agent 数据", "未知开发数据"]
+              : ["工具缓存", "Kondo 项目", "Agent 数据", "未知开发数据"];
+    return {
+      scope,
+      providers,
+      workspaceRoots: this.mockWorkspaceRoots(scope),
+      knownLocations: [],
+      deferredLocations: ["外部工具报告的缓存目录"],
+      warnings: ["当前为演示后端；未访问本机目录。"],
+    };
+  }
+
+  async getAppDataInfo(): Promise<AppDataInfoDto> {
+    return { dataDir: "演示数据目录（Mock）", backendMode: "mock" };
+  }
+
+  async clearJournal(): Promise<{ removedShardCount: number }> {
+    const removedShardCount = this.journal.length > 0 ? 1 : 0;
+    this.journal = [];
+    return { removedShardCount };
+  }
+
+  async resetScanData(): Promise<{ removedPlanCount: number; hadSnapshot: boolean }> {
+    const removedPlanCount = this.plans.size;
+    const hadSnapshot = this.snapshot !== null;
+    this.snapshot = null;
+    this.plans.clear();
+    this.clearAiBatches();
+    // Keep nextPlanId/nextGeneration monotonic so reset cannot resurrect a
+    // stale plan or generation. Journal, dispositions, preferences and AI
+    // profile metadata intentionally remain intact.
+    return { removedPlanCount, hadSnapshot };
   }
 
   async clearAllData(): Promise<number> {

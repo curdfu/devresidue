@@ -65,6 +65,52 @@ let subscription: ScanSubscription | null = null;
 /** Monotonic scan epoch (F10): incremented on every startScan call. */
 let epochCounter = 0;
 
+/**
+ * High-volume item events are published in short batches. A real scan can
+ * discover many entries in a single event-loop turn; copying the complete
+ * items array for every entry makes the renderer compete with the scanner.
+ */
+const ITEM_FLUSH_INTERVAL_MS = 50;
+let pendingItems: ScanItemDto[] = [];
+let pendingItemsEpoch: number | null = null;
+let itemFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearPendingItems(): void {
+  if (itemFlushTimer !== null) {
+    clearTimeout(itemFlushTimer);
+    itemFlushTimer = null;
+  }
+  pendingItems = [];
+  pendingItemsEpoch = null;
+}
+
+function flushPendingItems(epoch: number): void {
+  if (itemFlushTimer !== null) {
+    clearTimeout(itemFlushTimer);
+    itemFlushTimer = null;
+  }
+  if (pendingItems.length === 0 || pendingItemsEpoch !== epoch) return;
+
+  const batch = pendingItems;
+  pendingItems = [];
+  pendingItemsEpoch = null;
+  const current = useScanStore.getState();
+  if (current.activeEpoch !== epoch || current.phase !== "scanning") return;
+
+  useScanStore.setState((s) => ({
+    items: [...s.items, ...batch],
+    streamedCount: s.streamedCount + batch.length,
+  }));
+}
+
+function scheduleItemFlush(epoch: number): void {
+  if (itemFlushTimer !== null) return;
+  itemFlushTimer = setTimeout(() => {
+    itemFlushTimer = null;
+    flushPendingItems(epoch);
+  }, ITEM_FLUSH_INTERVAL_MS);
+}
+
 /** Snapshot freshness key: generation when present, else scanned_at. */
 function snapshotKey(snap: ScanSnapshotDto): number {
   return snap.generation > 0 ? snap.generation : snap.scanned_at;
@@ -109,6 +155,7 @@ export const useScanStore = create<ScanState>((set, get) => ({
     const epoch = ++epochCounter;
     // R4-H06: per-id parked terminals of previous epochs are void now —
     // the new epoch owns the terminal state; drop stale entries wholesale.
+    clearPendingItems();
     pendingTerminals.clear();
 
     set({
@@ -185,6 +232,7 @@ export const useScanStore = create<ScanState>((set, get) => ({
 
   reset: () => {
     epochCounter++;
+    clearPendingItems();
     pendingTerminals.clear();
     set({
       phase: "idle",
@@ -218,15 +266,19 @@ function makeHandlers() {
     onProgress: (p: { scan_id: number; provider: string; stage: string }) => {
       if (rejectStale(p.scan_id)) return;
       useScanStore.setState((s) => ({
-        progress: [...s.progress, { provider: p.provider, stage: p.stage }],
+        // Keep the visible activity trail bounded during long scans.
+        progress: [...s.progress, { provider: p.provider, stage: p.stage }].slice(-64),
       }));
     },
     onItem: (p: { scan_id: number; item: ScanItemDto }) => {
       if (rejectStale(p.scan_id)) return;
-      useScanStore.setState((s) => ({
-        items: [...s.items, p.item],
-        streamedCount: s.streamedCount + 1,
-      }));
+      const epoch = useScanStore.getState().activeEpoch;
+      if (pendingItemsEpoch !== epoch) {
+        clearPendingItems();
+        pendingItemsEpoch = epoch;
+      }
+      pendingItems.push(p.item);
+      scheduleItemFlush(epoch);
     },
     onWarning: (p: { scan_id: number; message: string }) => {
       if (rejectStale(p.scan_id)) return;
@@ -272,6 +324,7 @@ function makeHandlers() {
         // active epoch, never let it terminalise the new scan.
         return;
       }
+      flushPendingItems(s.activeEpoch);
       void finaliseDone(p);
     },
     onError: (p: { scan_id: number; message: string }) => {
@@ -298,6 +351,7 @@ function makeHandlers() {
 
 /** Applies the failure terminal (used by both the live and replay paths). */
 function failScan(message: string): void {
+  flushPendingItems(useScanStore.getState().activeEpoch);
   const err: CommandError = { code: "engine", message };
   useScanStore.setState({ phase: "error", error: err, lastError: err });
 }
@@ -316,6 +370,7 @@ function replayTerminal(pending: PendingTerminal): void {
     failScan(pending.message);
     return;
   }
+  flushPendingItems(pending.epoch);
   void finaliseDone(pending.payload);
 }
 

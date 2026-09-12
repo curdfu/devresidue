@@ -31,11 +31,13 @@ pub fn run(cmd: AiCommand) -> Result<(), String> {
     match cmd {
         AiCommand::Status => report_status(&open_profile_store(&data_dir)?),
         AiCommand::Enable => {
+            let _operation_lock = support::acquire_app_operation_lock(&data_dir)?;
             open_profile_store(&data_dir)?.set_master_enabled(true)?;
             println!("remote AI enabled");
             Ok(())
         }
         AiCommand::Disable => {
+            let _operation_lock = support::acquire_app_operation_lock(&data_dir)?;
             open_profile_store(&data_dir)?.set_master_enabled(false)?;
             println!("remote AI disabled");
             Ok(())
@@ -77,6 +79,7 @@ fn report_status(store: &AiProfileStore) -> Result<(), String> {
 }
 
 fn run_profile(data_dir: &Path, cmd: AiProfileCommand) -> Result<(), String> {
+    let _operation_lock = support::acquire_app_operation_lock(data_dir)?;
     let store = open_profile_store(data_dir)?;
     let keys = WindowsUserEnvKeyStore::new();
     match cmd {
@@ -139,6 +142,7 @@ fn run_profile(data_dir: &Path, cmd: AiProfileCommand) -> Result<(), String> {
 }
 
 fn run_recovery(data_dir: &Path, cmd: AiRecoveryCommand) -> Result<(), String> {
+    let _operation_lock = support::acquire_app_operation_lock(data_dir)?;
     let store = open_profile_store(data_dir)?;
     let keys = WindowsUserEnvKeyStore::new();
     match cmd {
@@ -210,6 +214,10 @@ fn run_analysis(data_dir: &Path, ids: &str, confirm: bool) -> Result<(), String>
         return Err("confirmation contains an item not present in this AI review".to_string());
     }
 
+    // Remote transport is deliberately outside the app-data lock. Only the
+    // final local confirmation re-check and rule transaction need to serialize
+    // with scan/plan/reset writers.
+    let _operation_lock = support::acquire_app_operation_lock(data_dir)?;
     let current_snapshot = verified_ai_snapshot()?;
     if current_snapshot.generation != snapshot.generation {
         service.clear_suggestions();

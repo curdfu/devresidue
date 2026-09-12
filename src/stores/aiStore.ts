@@ -12,6 +12,13 @@ import type {
 import { getBackend } from "@/adapters";
 import { toCommandError } from "@/adapters/backend";
 
+export type AiReturnContext = {
+  sourcePage: "unknown";
+  sourceView: "unknown" | "review";
+  itemIds: number[];
+  scanGeneration: number;
+};
+
 /**
  * Remote-AI UI state is intentionally process-only. In particular, this
  * module does not use Zustand persist and has no API Key field: the settings
@@ -38,6 +45,8 @@ interface AiStoreState {
   analyzing: boolean;
   confirming: boolean;
   confirmationResult: AiConfirmResultDto | null;
+  /** Process-only navigation context; never contains paths, keys or payloads. */
+  returnContext: AiReturnContext | null;
   error: CommandError | null;
 
   loadProfiles: () => Promise<void>;
@@ -57,6 +66,8 @@ interface AiStoreState {
   confirmSelected: () => Promise<void>;
   cancelAnalysis: () => Promise<void>;
   discardPreparedBatch: () => Promise<void>;
+  setReturnContext: (context: AiReturnContext | null) => void;
+  clearReturnContext: () => void;
   resetForNewScan: (generation: number) => void;
   dismissError: () => void;
 }
@@ -95,6 +106,7 @@ export const useAiStore = create<AiStoreState>((set, get) => ({
   modelsLoading: false,
   availableModels: [],
   ...emptyReviewState(),
+  returnContext: null,
   error: null,
 
   loadProfiles: async () => {
@@ -312,8 +324,11 @@ export const useAiStore = create<AiStoreState>((set, get) => ({
   resetForNewScan: (_generation) => {
     const batch = get().preparedBatch;
     if (batch) void getBackend().cancelAiBatch(batch.batchId).catch(() => undefined);
-    set({ ...emptyReviewState(), error: null });
+    set({ ...emptyReviewState(), returnContext: null, error: null });
   },
+
+  setReturnContext: (returnContext) => set({ returnContext }),
+  clearReturnContext: () => set({ returnContext: null }),
 
   dismissError: () => set({ error: null }),
 }));

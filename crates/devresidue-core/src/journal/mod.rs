@@ -369,13 +369,40 @@ pub fn clear_all(base_dir: &Path) -> Result<usize, JournalError> {
     for entry in rd {
         let entry = entry.map_err(|e| JournalError(format!("journal dir entry: {e}")))?;
         let path = entry.path();
-        if path.is_file() {
+        let is_owned_shard = entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+            && is_journal_shard_name(&entry.file_name());
+        if is_owned_shard {
             fs::remove_file(&path)
                 .map_err(|e| JournalError(format!("remove {}: {e}", path.display())))?;
             removed += 1;
         }
     }
     Ok(removed)
+}
+
+/// Returns whether a directory entry is one of the journal shard names owned
+/// by DevResidue. Unknown files, directories and reparse/symlink entries are
+/// deliberately left untouched during maintenance.
+fn is_journal_shard_name(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else { return false };
+    let Some(rest) = name.strip_prefix("devresidue-") else { return false };
+    let Some(stem) = rest.strip_suffix(".jsonl") else { return false };
+    let mut parts = stem.split('.');
+    let Some(date) = parts.next() else { return false };
+    if date.len() != 8 || !date.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+    match parts.next() {
+        None => true,
+        Some(suffix) => {
+            !suffix.is_empty()
+                && suffix.chars().all(|ch| ch.is_ascii_digit())
+                && parts.next().is_none()
+        }
+    }
 }
 
 /// Reads journal shards newest-first and returns the last `limit` records in

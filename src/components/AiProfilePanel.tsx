@@ -104,7 +104,11 @@ export function AiProfilePanel() {
   };
 
   return (
-    <section className="settings-card" aria-labelledby="remote-ai-heading">
+    <section
+      className="settings-card"
+      aria-labelledby="remote-ai-heading"
+      aria-describedby={error ? "remote-ai-profile-error" : undefined}
+    >
       <h3 id="remote-ai-heading">联网 AI 研判</h3>
       <p>
         可选的 OpenAI-compatible 服务，仅在你确认后发送已展示的脱敏元数据。它不读取文件内容、
@@ -112,20 +116,23 @@ export function AiProfilePanel() {
       </p>
 
       <div className="ai-advisor-toggle-row">
-        <label className="toggle">
+        <label htmlFor="remote-ai-master-toggle" className="toggle" title="切换联网 AI 研判总开关">
           <input
+            id="remote-ai-master-toggle"
             type="checkbox"
             checked={masterEnabled}
             disabled={profileBusy}
+            aria-labelledby="remote-ai-master-label"
+            aria-describedby="remote-ai-master-help"
             onChange={(event) => void setMasterEnabled(event.target.checked)}
           />
           <span className="toggle-track"><span className="toggle-thumb" /></span>
         </label>
         <div>
-          <div style={{ color: "var(--text)", fontWeight: 500 }}>
+          <div id="remote-ai-master-label" style={{ color: "var(--text)", fontWeight: 500 }}>
             {masterEnabled ? "远程研判已开启" : "远程研判已关闭"}
           </div>
-          <div style={{ color: "var(--text-mute)", fontSize: 11.5 }}>
+          <div id="remote-ai-master-help" style={{ color: "var(--text-mute)", fontSize: 11.5 }}>
             这是联网 AI 研判的总开关
           </div>
         </div>
@@ -140,7 +147,7 @@ export function AiProfilePanel() {
       </p>
 
       {error && (
-        <div className="unknown-err" role="alert" style={{ marginBottom: 10 }}>
+        <div id="remote-ai-profile-error" className="unknown-err" role="alert" style={{ marginBottom: 10 }}>
           {error.message}
         </div>
       )}
@@ -151,11 +158,13 @@ export function AiProfilePanel() {
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, marginBottom: 12 }}>
-        <label style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 12 }}>
+        <label htmlFor="remote-ai-active-profile" style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 12 }}>
           活动配置
           <select
+            id="remote-ai-active-profile"
             value={activeProfile?.id ?? ""}
             disabled={profileBusy || profiles.length === 0}
+            aria-describedby={error ? "remote-ai-profile-error" : undefined}
             onChange={(event) => void setActiveProfile(event.target.value || null)}
           >
             <option value="">未选择</option>
@@ -227,53 +236,78 @@ export function AiProfilePanel() {
         </div>
       )}
 
-      <form onSubmit={(event) => void submit(event)} style={{ display: "grid", gap: 8 }}>
+      <form
+        onSubmit={(event) => void submit(event)}
+        aria-describedby={error ? "remote-ai-profile-error" : undefined}
+        style={{ display: "grid", gap: 8 }}
+      >
         <div style={{ color: "var(--text)", fontWeight: 500 }}>
           {editing ? "编辑配置" : "新建配置"}
         </div>
         <div className="root-add" style={{ display: "grid", gridTemplateColumns: "minmax(10rem, .8fr) minmax(14rem, 1.2fr)", gap: 8 }}>
-          <input
-            value={form.name}
-            placeholder="配置名称"
-            onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-            required
-          />
-          <input
-            value={form.baseUrl}
-            placeholder="https://api.example.com/v1"
-            inputMode="url"
-            onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))}
-            required
-          />
-          <input
-            value={form.model}
-            placeholder="模型名称"
-            list={editing && modelProfileId === editing ? "remote-ai-model-options" : undefined}
-            onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))}
-            required
-          />
+          <label htmlFor="remote-ai-profile-name" style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 12 }}>
+            配置名称
+            <input
+              id="remote-ai-profile-name"
+              name="profile-name"
+              value={form.name}
+              placeholder="例如：公司专用账号"
+              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              required
+            />
+          </label>
+          <label htmlFor="remote-ai-base-url" style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 12 }}>
+            Base URL
+            <input
+              id="remote-ai-base-url"
+              name="base-url"
+              value={form.baseUrl}
+              placeholder="https://api.example.com/v1"
+              inputMode="url"
+              onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))}
+              required
+            />
+          </label>
+          <label htmlFor="remote-ai-model" style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 12 }}>
+            模型名称
+            <input
+              id="remote-ai-model"
+              name="model"
+              value={form.model}
+              placeholder="例如：gpt-4.1-mini"
+              list={editing && modelProfileId === editing ? "remote-ai-model-options" : undefined}
+              onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))}
+              required
+            />
+          </label>
           {editing && modelProfileId === editing && (
             <datalist id="remote-ai-model-options">
               {availableModels.map((model) => <option key={model} value={model} />)}
             </datalist>
           )}
-          <input
-            ref={apiKeyRef}
-            type="password"
-            name="remote-ai-api-key"
-            autoComplete="new-password"
-            placeholder={editing ? "重新输入 Key 以更新配置" : "API Key（仅本次提交）"}
-            required
-          />
+          <label htmlFor="remote-ai-api-key" style={{ display: "grid", gap: 4, color: "var(--text-mute)", fontSize: 12 }}>
+            API Key
+            <input
+              id="remote-ai-api-key"
+              ref={apiKeyRef}
+              type="password"
+              name="remote-ai-api-key"
+              autoComplete="new-password"
+              placeholder={editing ? "重新输入 Key 以更新配置" : "API Key（仅本次提交）"}
+              required
+            />
+          </label>
         </div>
         <div className="ai-advisor-hint">
           为保护 API Key，提交后无论成功或失败都会清空输入；保存失败时请修正配置后重新输入。
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-          <label style={{ color: "var(--text-mute)", fontSize: 12 }}>
+        <div className="ai-profile-form-actions">
+          <label className="ai-profile-inline-field" htmlFor="remote-ai-timeout" style={{ color: "var(--text-mute)", fontSize: 12 }}>
             超时（秒）
             <input
-              style={{ width: 76, marginLeft: 6 }}
+              id="remote-ai-timeout"
+              name="timeout-seconds"
+              style={{ width: 76 }}
               type="number"
               min={1}
               max={600}
@@ -283,10 +317,11 @@ export function AiProfilePanel() {
               }
             />
           </label>
-          <label style={{ color: "var(--text-mute)", fontSize: 12 }}>
+          <label className="ai-profile-inline-field" htmlFor="remote-ai-api-protocol" style={{ color: "var(--text-mute)", fontSize: 12 }}>
             接口模式
             <select
-              style={{ marginLeft: 6 }}
+              id="remote-ai-api-protocol"
+              name="api-protocol"
               value={form.apiProtocol}
               onChange={(event) =>
                 setForm((current) => ({ ...current, apiProtocol: event.target.value as AiApiProtocol }))
@@ -296,10 +331,11 @@ export function AiProfilePanel() {
               <option value="openai-responses">OpenAI Responses</option>
             </select>
           </label>
-          <label style={{ color: "var(--text-mute)", fontSize: 12 }}>
+          <label className="ai-profile-inline-field" htmlFor="remote-ai-structured-output" style={{ color: "var(--text-mute)", fontSize: 12 }}>
             结构化输出
             <select
-              style={{ marginLeft: 6 }}
+              id="remote-ai-structured-output"
+              name="structured-output"
               value={form.structuredOutput}
               onChange={(event) =>
                 setForm((current) => ({
@@ -313,13 +349,15 @@ export function AiProfilePanel() {
               <option value="json-object">JSON Object</option>
             </select>
           </label>
-          <label style={{ color: "var(--text-mute)", fontSize: 12 }}>
+          <label className="ai-profile-enabled" htmlFor="remote-ai-profile-enabled">
             <input
+              id="remote-ai-profile-enabled"
+              name="profile-enabled"
               type="checkbox"
               checked={form.enabled}
               onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
-            />{" "}
-            此配置可用
+            />
+            <span>此配置可用</span>
           </label>
           <button className="btn small primary" type="submit" disabled={profileBusy}>
             {profileBusy ? <LoaderCircle size={12} className="spin" /> : <RefreshCw size={12} />}

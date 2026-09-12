@@ -65,6 +65,9 @@ pub fn ai_upsert_profile(
     enabled: bool,
     api_key: String,
 ) -> Result<AiProfileDto, CommandError> {
+    let _operation = state
+        .begin_operation("ai-profile-write")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = data_dir(&state);
     let store = open_profile_store(&data_dir)?;
     let input = AiProfileInput {
@@ -102,6 +105,9 @@ pub fn ai_delete_profile(
     state: State<'_, AppState>,
     profile_id: String,
 ) -> Result<(), CommandError> {
+    let _operation = state
+        .begin_operation("ai-profile-write")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = data_dir(&state);
     let store = open_profile_store(&data_dir)?;
     let keys = WindowsUserEnvKeyStore::new();
@@ -119,6 +125,9 @@ pub fn ai_set_active_profile(
     state: State<'_, AppState>,
     profile_id: Option<String>,
 ) -> Result<AiProfileStateDto, CommandError> {
+    let _operation = state
+        .begin_operation("ai-profile-write")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = data_dir(&state);
     let store = open_profile_store(&data_dir)?;
     let id = profile_id.as_deref().map(parse_profile_id).transpose()?;
@@ -134,6 +143,9 @@ pub fn ai_set_master_enabled(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> Result<AiProfileStateDto, CommandError> {
+    let _operation = state
+        .begin_operation("ai-profile-write")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = data_dir(&state);
     let store = open_profile_store(&data_dir)?;
     let profiles = store.set_master_enabled(enabled).map_err(profile_error)?;
@@ -185,9 +197,13 @@ pub async fn ai_prepare_batch(
     item_ids: Vec<u64>,
     include_paths: bool,
 ) -> Result<AiPreparedBatchDto, CommandError> {
+    let operation = state
+        .begin_operation("ai-prepare")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = data_dir(&state);
     let model = Arc::clone(&state.model);
     run_ai_blocking(move || {
+        let _operation = operation;
         prepare_batch(
             &model,
             &data_dir,
@@ -241,6 +257,9 @@ pub async fn ai_analyze(
     state: State<'_, AppState>,
     batch_id: String,
 ) -> Result<Vec<AiSuggestionDto>, CommandError> {
+    let operation = state
+        .begin_operation("ai-analyze")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = data_dir(&state);
     let model = Arc::clone(&state.model);
     let (service, review, cancellation) = {
@@ -251,6 +270,7 @@ pub async fn ai_analyze(
     let worker_model = Arc::clone(&model);
     let worker_batch_id = batch_id.clone();
     let result = run_ai_blocking(move || {
+        let _operation = operation;
         analyze_started_batch(
             &worker_model,
             &data_dir,
@@ -331,6 +351,9 @@ pub fn ai_confirm(
     scan_generation: u64,
     items: Vec<AiConfirmItemArg>,
 ) -> Result<AiConfirmResultDto, CommandError> {
+    let _operation = state
+        .begin_operation("ai-confirm")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = data_dir(&state);
     let (service, review) = {
         let model = state.model.lock().unwrap();

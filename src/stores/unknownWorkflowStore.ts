@@ -15,6 +15,8 @@ interface UnknownWorkflowState {
   /** Direct ignore/protect decision. */
   setDisposition: (itemId: number, disposition: Disposition) => Promise<void>;
   dismissError: () => void;
+  /** Clears only transient in-flight/error UI state after scan-data reset. */
+  reset: () => void;
 }
 
 async function applyAndRefresh(fn: () => Promise<unknown>, itemId: number) {
@@ -51,4 +53,5 @@ export const useUnknownWorkflowStore = create<UnknownWorkflowState>((set) => ({
   },
 
   dismissError: () => set({ error: null }),
+  reset: () => set({ applying: new Set(), error: null }),
 }));

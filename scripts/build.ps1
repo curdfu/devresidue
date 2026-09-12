@@ -31,6 +31,9 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+# 所有 workspace/Tauri Cargo 调用共用仓库根 target，避免工作区从另一条盘符路径
+# 移动或复制后复用 src-tauri\target 中带旧绝对路径的 Tauri build-script 产物。
+$CargoTargetDir = Join-Path $RepoRoot 'target'
 
 function Write-Step { param([string]$Msg) Write-Host ''; Write-Host ('=' * 64); Write-Host "==> $Msg"; Write-Host ('=' * 64) }
 function Write-Ok   { param([string]$Msg) Write-Host "[OK]   $Msg" }
@@ -76,6 +79,12 @@ function Get-Tools {
     $node  = Find-ToolPath 'node'
     $npm   = Resolve-OnPath 'npm' @('.cmd')
     return [pscustomobject]@{ Cargo = $cargo; Rustc = $rustc; Node = $node; Npm = $npm }
+}
+
+function Initialize-CargoTarget {
+    # 构建流程以当前仓库路径为权威，不继承可能指向另一份 checkout 的 target。
+    $env:CARGO_TARGET_DIR = $CargoTargetDir
+    Write-Ok ("Cargo target 统一为：{0}" -f $CargoTargetDir)
 }
 
 function Get-VersionString {
@@ -135,13 +144,14 @@ $HeartbeatSeconds = 10
 function Invoke-NativeWithHeartbeat {
     <#
       .SYNOPSIS
-        运行外部命令并转发其原始 stdout/stderr；在命令尚未退出时按固定间隔输出
+        收集并转发外部命令的原始 stdout/stderr；在命令尚未退出时按固定间隔输出
         中文心跳状态行，用于 Tauri final link 这类长时间静默阶段的“可观测”提示。
 
       .DESCRIPTION
         仅用于 Tauri shell release 构建（不改动该 cargo 命令/参数/工作目录/退出码语义）。
-        Cargo 原始 stdout/stderr 由子进程继承父控制台实时转发给用户；
-        心跳每 $HeartbeatSeconds 秒输出一次：阶段/Label、已耗时、以及该阶段相关或
+        Cargo 原始 stdout/stderr 由异步读取任务持续排空，并在命令结束时转发给用户；
+        这样兼容 PowerShell 宿主且不会因输出管道缓冲死锁。心跳每
+        $HeartbeatSeconds 秒输出一次：阶段/Label、已耗时、以及该阶段相关或
         系统可检测到的活跃子进程摘要（cargo/rustc/link/lld-link 等，含 CPU 秒与内存）。
         若无匹配子进程则如实提示“子进程仍在等待/链接器状态暂不可见”。
         注意：这是“仍在运行/等待”的状态提示，不是虚假的进度百分比。
@@ -171,18 +181,23 @@ function Invoke-NativeWithHeartbeat {
         if ($_ -match '[\s"]') { '"{0}"' -f ($_ -replace '"', '""') } else { $_ }
     }) -join ' ')
 
-    # 用 .NET ProcessStartInfo：WorkingDirectory 生效、输出继承父控制台（实时转发
-    # 原始 stdout/stderr，符合“不改命令/参数/工作目录语义”），PS 5.1 亦兼容。
+    # 用 .NET ProcessStartInfo：WorkingDirectory 生效。显式异步读取 stdout/stderr，
+    # 避免 PowerShell 宿主丢失 Cargo 的真实错误或因管道缓冲阻塞；PS 5.1 亦兼容。
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $FilePath
     $psi.WorkingDirectory = $WorkingDir
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
     if ($argStr) { $psi.Arguments = $argStr }
 
     $proc = $null
     try {
         $proc = [System.Diagnostics.Process]::Start($psi)
+        # 必须在轮询等待前启动两个异步读取，持续排空管道避免子进程阻塞。
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
 
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $lastBeat = [Environment]::TickCount64
@@ -218,7 +233,21 @@ function Invoke-NativeWithHeartbeat {
                 }
             }
         }
+        # WaitForExit() 确保进程句柄已完成；任务结果包含完整 stdout/stderr，
+        # 尤其是 release build 失败时的首个 error 行。
+        $proc.WaitForExit()
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
         $sw.Stop()
+
+        if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+            Write-Host '[命令 stdout]'
+            Write-Host $stdout.TrimEnd()
+        }
+        if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+            Write-Host '[命令 stderr]'
+            Write-Host $stderr.TrimEnd()
+        }
 
         $rc = $proc.ExitCode
         Write-Host ("[心跳] 命令结束：{0}，退出码 {1}，耗时 {2}s" -f $disp, $rc, [math]::Round($sw.Elapsed.TotalSeconds, 0))
@@ -399,6 +428,7 @@ function Invoke-Build {
 
     $cargo = (Get-Tools).Cargo
     if (-not $cargo) { throw '无法定位 cargo，无法构建 Rust。' }
+    Initialize-CargoTarget
 
     Write-Step '工作区 release 构建：cargo build --workspace --release --locked'
     Invoke-Native $cargo @('build', '--workspace', '--release', '--locked') $RepoRoot 'cargo build --workspace --release --locked'
@@ -448,8 +478,8 @@ function Invoke-Portable {
     if (Test-Path -LiteralPath $zip)    { Remove-Item -LiteralPath $zip -Force }
 
     # 源文件
-    $gui   = Join-Path $RepoRoot 'src-tauri\target\release\devresidue-app.exe'
-    $cli   = Join-Path $RepoRoot 'target\release\devresidue.exe'
+    $gui   = Join-Path $CargoTargetDir 'release\devresidue-app.exe'
+    $cli   = Join-Path $CargoTargetDir 'release\devresidue.exe'
     $rules = Join-Path $RepoRoot 'resources\rules'
 
     # 每个必要源文件均需存在，否则失败

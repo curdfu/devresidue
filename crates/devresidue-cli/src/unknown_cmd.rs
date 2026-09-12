@@ -20,6 +20,7 @@ pub fn run(cmd: UnknownCommand) -> Result<(), String> {
     };
 
     let data_dir = support::data_dir()?;
+    let _operation_lock = support::acquire_app_operation_lock(&data_dir)?;
     let user_dir = user_rules_dir(&data_dir);
     std::fs::create_dir_all(&user_dir)
         .map_err(|e| format!("create {}: {e}", user_dir.display()))?;

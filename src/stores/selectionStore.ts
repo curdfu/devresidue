@@ -8,6 +8,8 @@ import { create } from "zustand";
 interface SelectionState {
   selected: Set<number>;
   toggle: (id: number) => void;
+  addMany: (ids: number[]) => void;
+  removeMany: (ids: number[]) => void;
   setAll: (ids: number[]) => void;
   clear: () => void;
 }
@@ -20,6 +22,20 @@ export const useSelectionStore = create<SelectionState>((set) => ({
       const next = new Set(s.selected);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return { selected: next };
+    }),
+
+  addMany: (ids) =>
+    set((s) => {
+      const next = new Set(s.selected);
+      for (const id of ids) next.add(id);
+      return { selected: next };
+    }),
+
+  removeMany: (ids) =>
+    set((s) => {
+      const next = new Set(s.selected);
+      for (const id of ids) next.delete(id);
       return { selected: next };
     }),
 

@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use devresidue_providers::scan_store::{self, ScanSnapshot};
+use devresidue_core::safety::FileLock;
 
 use crate::ai::AiSessionState;
 use crate::support;
@@ -44,6 +45,31 @@ pub struct AppModel {
     pub ai: AiSessionState,
     /// Monotonic scan-id allocator.
     next_scan_id: u64,
+    /// Process-local registration for mutating application operations. The
+    /// inter-process data-root lock remains the authoritative cross-process
+    /// boundary; this fast guard prevents same-process races from starting.
+    operation: Option<&'static str>,
+}
+
+/// Guard held for the complete lifetime of one mutating operation.
+#[derive(Debug)]
+pub struct OperationGuard {
+    model: Arc<Mutex<AppModel>>,
+    name: &'static str,
+    /// The fixed data-root lock is held for the complete operation lifetime.
+    /// Keeping it in the guard makes success, error and panic paths release it
+    /// through ordinary Rust drop semantics.
+    _data_lock: Box<dyn FileLock>,
+}
+
+impl Drop for OperationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut model) = self.model.lock() {
+            if model.operation == Some(self.name) {
+                model.operation = None;
+            }
+        }
+    }
 }
 
 impl AppModel {
@@ -66,6 +92,7 @@ impl AppModel {
             active: None,
             ai: AiSessionState::default(),
             next_scan_id: 0,
+            operation: None,
         }
     }
 
@@ -148,6 +175,10 @@ impl AppModel {
     pub fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
     }
+
+    pub fn active_operation(&self) -> Option<&'static str> {
+        self.operation
+    }
 }
 
 /// The managed Tauri state handle (cheap to clone: an `Arc` to the model).
@@ -170,5 +201,42 @@ impl AppState {
         Self {
             model: Arc::new(Mutex::new(AppModel::open_at(data_dir))),
         }
+    }
+
+    /// Registers a mutating operation without holding the model mutex during
+    /// slow I/O. The returned guard must be moved into the worker for async
+    /// operations so it cannot release early.
+    pub fn begin_operation(&self, name: &'static str) -> Result<OperationGuard, String> {
+        let data_dir = {
+            let model = self.model.lock().unwrap();
+            if let Some(existing) = model.active_operation() {
+                return Err(format!("application operation '{existing}' is already running"));
+            }
+            model.data_dir().to_path_buf()
+        };
+
+        let lock_path = data_dir.join("app-data-operation.lock");
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|error| format!("unable to create application data directory: {error}"))?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|error| format!("unable to open application operation lock: {error}"))?;
+        let data_lock = devresidue_platform_windows::filesystem::try_lock_file_exclusive(file)?;
+
+        let mut model = self.model.lock().unwrap();
+        if let Some(existing) = model.active_operation() {
+            drop(data_lock);
+            return Err(format!("application operation '{existing}' is already running"));
+        }
+        model.operation = Some(name);
+        Ok(OperationGuard {
+            model: Arc::clone(&self.model),
+            name,
+            _data_lock: data_lock,
+        })
     }
 }

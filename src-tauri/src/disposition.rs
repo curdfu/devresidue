@@ -19,6 +19,9 @@ pub fn set_disposition(
     item_id: u64,
     disposition: DispositionArg,
 ) -> Result<DispositionResultDto, CommandError> {
+    let _operation = state
+        .begin_operation("set-disposition")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let (data_dir, item) = {
         let model = state.model.lock().unwrap();
         let item = model

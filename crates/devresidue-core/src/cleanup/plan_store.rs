@@ -173,6 +173,39 @@ impl PlanStore {
         serde_json::from_slice(&bytes)
             .map_err(|e| PlanStoreError(format!("parse {}: {e}", path.display())))
     }
+
+    /// Removes only persisted plan files owned by this store. The counter and
+    /// lock are intentionally retained so a reset cannot re-use plan IDs.
+    pub fn clear_plans(&self) -> Result<usize, PlanStoreError> {
+        let _guard = self.lock()?;
+        let entries = fs::read_dir(&self.dir)
+            .map_err(|e| PlanStoreError(format!("read {}: {e}", self.dir.display())))?;
+        let mut removed = 0;
+        for entry in entries {
+            let entry = entry
+                .map_err(|e| PlanStoreError(format!("plan dir entry: {e}")))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|e| PlanStoreError(format!("inspect {}: {e}", entry.path().display())))?;
+            if !file_type.is_file() || file_type.is_symlink() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(stem) = name.strip_suffix(".json") else { continue };
+            if stem.is_empty() || !stem.chars().all(|ch| ch.is_ascii_digit()) {
+                continue;
+            }
+            fs::remove_file(entry.path()).map_err(|e| {
+                PlanStoreError(format!(
+                    "remove plan {} after {removed} files: {e}",
+                    entry.path().display()
+                ))
+            })?;
+            removed += 1;
+        }
+        Ok(removed)
+    }
 }
 
 /// Whether a lock file is older than the stale window (a crash orphan).
@@ -267,6 +300,25 @@ mod tests {
         // branch instead: a lock whose metadata is unreadable counts as
         // non-stale (safe default — we never break an ambiguous lock).
         assert!(!is_stale(&base.join("missing.lock")));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn clear_plans_removes_only_numeric_json_and_keeps_counter() {
+        let base = tmp_base("clear-plans");
+        let store = PlanStore::open_at(&base).expect("open");
+        let mut plan = sample_plan(CleanupPlanId::from_raw(0));
+        store.save(&mut plan).expect("save");
+        fs::write(store.dir().join("notes.json"), b"keep").unwrap();
+        fs::write(store.dir().join("2.tmp"), b"keep").unwrap();
+        let removed = store.clear_plans().expect("clear");
+        assert_eq!(removed, 1);
+        assert!(store.dir().join("_next_id").is_file());
+        assert!(store.dir().join("notes.json").is_file());
+        assert!(store.dir().join("2.tmp").is_file());
+        let mut next = sample_plan(CleanupPlanId::from_raw(0));
+        let id = store.save(&mut next).expect("save after clear");
+        assert_eq!(id.raw(), 2);
         let _ = fs::remove_dir_all(&base);
     }
 }

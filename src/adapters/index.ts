@@ -55,6 +55,24 @@ class TauriBackendLazy implements Backend {
   async getJournal(...args: Parameters<Backend["getJournal"]>) {
     return (await this.real()).getJournal(...args);
   }
+  async clearJournal(...args: Parameters<Backend["clearJournal"]>) {
+    return (await this.real()).clearJournal(...args);
+  }
+  async resetScanData(...args: Parameters<Backend["resetScanData"]>) {
+    return (await this.real()).resetScanData(...args);
+  }
+  async pickWorkspaceDirectory(...args: Parameters<Backend["pickWorkspaceDirectory"]>) {
+    return (await this.real()).pickWorkspaceDirectory(...args);
+  }
+  async validateWorkspaceRoots(...args: Parameters<Backend["validateWorkspaceRoots"]>) {
+    return (await this.real()).validateWorkspaceRoots(...args);
+  }
+  async getScanScopePreview(...args: Parameters<Backend["getScanScopePreview"]>) {
+    return (await this.real()).getScanScopePreview(...args);
+  }
+  async getAppDataInfo(...args: Parameters<Backend["getAppDataInfo"]>) {
+    return (await this.real()).getAppDataInfo(...args);
+  }
   async clearAllData(...args: Parameters<Backend["clearAllData"]>) {
     return (await this.real()).clearAllData(...args);
   }

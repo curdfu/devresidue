@@ -30,7 +30,10 @@ use devresidue_providers::scan_store::{self, ScanMode, ScanSnapshot};
 use devresidue_providers::unknown;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::contract::{CommandError, ErrorCode, ScanHandleDto, ScanScope};
+use crate::contract::{
+    AppDataInfoDto, CommandError, ErrorCode, ScanHandleDto, ScanScope, ScanScopePreviewDto,
+    WorkspaceRootValidationDto,
+};
 use crate::state::AppState;
 use crate::support::ShellTool;
 
@@ -57,6 +60,7 @@ const PROJECT_FAMILIES: [FamilyFn; 1] = [project::scan];
 const AGENT_FAMILIES: [FamilyFn; 1] = [agents::scan];
 const UNKNOWN_FAMILIES: [FamilyFn; 1] = [unknown::scan];
 const ALL_FAMILIES: [FamilyFn; 4] = [dev_cache::scan, project::scan, agents::scan, unknown::scan];
+const NO_PROJECT_FAMILIES: [FamilyFn; 3] = [dev_cache::scan, agents::scan, unknown::scan];
 
 /// UI-facing events streamed during a scan (provider-independent; the command
 /// wrapper adds the `scan_id` and picks the Tauri event name).
@@ -136,6 +140,9 @@ pub fn scan(
     state: State<'_, AppState>,
     scope: ScanScope,
 ) -> Result<ScanHandleDto, CommandError> {
+    let operation = state
+        .begin_operation("scan")
+        .map_err(|e| CommandError::new(ErrorCode::Busy, e))?;
     let data_dir = state.model.lock().unwrap().data_dir().to_path_buf();
     // F-2-1 rule gate: assemble fail-closed *before* spawning so the caller
     // gets a structured error instead of a silently unguarded scan.
@@ -151,6 +158,7 @@ pub fn scan(
 
     let state = state.inner().clone();
     std::thread::spawn(move || {
+        let _operation = operation;
         // R10: the worker reports its terminal outcome through the event
         // stream — the spawned closure only surfaces unexpected join/emit
         // problems on stderr. scan_job itself clears the active state on
@@ -314,7 +322,14 @@ fn scope_plan(scope: &ScanScope) -> (&'static [FamilyFn], RootsMode) {
             RootsMode::Explicit(roots.iter().map(PathBuf::from).collect()),
         ),
         ScanScope::Unknown => (&UNKNOWN_FAMILIES, RootsMode::ProtectionRoots),
-        ScanScope::Default => (&ALL_FAMILIES, RootsMode::DefaultCandidates),
+        ScanScope::Default { workspace_roots: None } => (&ALL_FAMILIES, RootsMode::DefaultCandidates),
+        ScanScope::Default { workspace_roots: Some(roots) } if roots.is_empty() => {
+            (&NO_PROJECT_FAMILIES, RootsMode::Explicit(Vec::new()))
+        }
+        ScanScope::Default { workspace_roots: Some(roots) } => (
+            &ALL_FAMILIES,
+            RootsMode::Explicit(roots.iter().map(PathBuf::from).collect()),
+        ),
     }
 }
 
@@ -542,6 +557,209 @@ pub fn get_scan_results(state: State<'_, AppState>) -> Result<ScanSnapshot, Comm
             ErrorCode::ScanNotFound,
             "no scan result yet — run a scan first",
         )
+    })
+}
+
+/// Opens a native workspace picker when one is available.
+///
+/// The shell intentionally has no dialog plugin dependency yet. Returning
+/// `None` is a safe cancellation/no-op and keeps the manual path field as the
+/// authoritative input until a native picker is added behind an explicit
+/// dependency change.
+#[tauri::command]
+pub fn pick_workspace_directory() -> Result<Option<String>, CommandError> {
+    Ok(None)
+}
+
+fn normalize_workspace_root(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut normalized = trimmed.replace('/', "\\");
+    while normalized.len() > 3 && normalized.ends_with('\\') {
+        normalized.pop();
+    }
+    Some(normalized)
+}
+
+fn is_absolute_workspace_root(value: &str) -> bool {
+    value.starts_with("\\\\")
+        || value.starts_with('/')
+        || (value.as_bytes().get(1) == Some(&b':')
+            && value
+                .as_bytes()
+                .get(2)
+                .is_some_and(|byte| *byte == b'\\' || *byte == b'/'))
+}
+
+fn root_contains(parent: &str, child: &str) -> bool {
+    let parent = parent.trim_end_matches(['\\', '/']);
+    let parent_lower = parent.to_ascii_lowercase();
+    let child_lower = child.to_ascii_lowercase();
+    child_lower
+        .strip_prefix(&parent_lower)
+        .is_some_and(|rest| rest.starts_with('\\') || rest.starts_with('/'))
+}
+
+fn workspace_root_validation_error(
+    normalized: Option<&str>,
+    absolute: bool,
+    duplicate: bool,
+    contained_by: Option<&str>,
+) -> Option<(&'static str, &'static str)> {
+    if normalized.is_none() {
+        Some(("blank", "目录不能为空"))
+    } else if !absolute {
+        Some(("not-absolute", "请输入绝对目录路径"))
+    } else if duplicate {
+        Some(("duplicate", "与前面的目录重复"))
+    } else if contained_by.is_some() {
+        Some(("nested", "被前面的工作区目录包含"))
+    } else {
+        None
+    }
+}
+
+/// Validates workspace roots without scanning or changing any filesystem
+/// state. Results are returned per input so the UI can show all corrections.
+#[tauri::command]
+pub fn validate_workspace_roots(
+    roots: Vec<String>,
+) -> Result<Vec<WorkspaceRootValidationDto>, CommandError> {
+    let normalized: Vec<Option<String>> = roots
+        .iter()
+        .map(|input| normalize_workspace_root(input))
+        .collect();
+
+    Ok(roots
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            let value = normalized[index].as_deref();
+            let absolute = value.is_some_and(is_absolute_workspace_root);
+            let duplicate = value.is_some_and(|candidate| {
+                normalized[..index]
+                    .iter()
+                    .flatten()
+                    .any(|previous| previous.eq_ignore_ascii_case(candidate))
+            });
+            let contained_by = value.and_then(|candidate| {
+                normalized[..index]
+                    .iter()
+                    .flatten()
+                    .find(|previous| root_contains(previous, candidate))
+                    .cloned()
+            });
+            let mut error = workspace_root_validation_error(
+                value,
+                absolute,
+                duplicate,
+                contained_by.as_deref(),
+            );
+            if error.is_none() {
+                if let Some(path) = value.map(Path::new) {
+                    match std::fs::metadata(path) {
+                        Ok(metadata) if !metadata.is_dir() => {
+                            error = Some(("not-directory", "路径不是目录"));
+                        }
+                        Err(_) => {
+                            error = Some(("not-found", "目录不存在或不可访问"));
+                        }
+                        Ok(_) => {}
+                    }
+                }
+            }
+            WorkspaceRootValidationDto {
+                input: input.clone(),
+                normalized: value.map(str::to_string),
+                valid: error.is_none(),
+                error_code: error.map(|(code, _)| code.to_string()),
+                message: error.map(|(_, message)| message.to_string()),
+                duplicate,
+                contained_by,
+            }
+        })
+        .collect())
+}
+
+fn env_workspace_roots() -> Vec<String> {
+    let Ok(raw) = std::env::var("DEVRESIDUE_WORKSPACE_ROOTS") else {
+        return Vec::new();
+    };
+    raw.split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn scope_preview_parts(scope: &ScanScope) -> (Vec<String>, Vec<String>, Vec<String>) {
+    match scope {
+        ScanScope::Agents => (
+            vec!["Agent 数据".into()],
+            Vec::new(),
+            vec!["Agent 目录由后端按当前用户环境解析".into()],
+        ),
+        ScanScope::DevCache => (
+            vec!["工具缓存".into()],
+            Vec::new(),
+            vec!["工具缓存目录由后端按当前用户环境解析".into()],
+        ),
+        ScanScope::Projects { roots } => (vec!["Kondo 项目".into()], roots.clone(), Vec::new()),
+        ScanScope::Unknown => (
+            vec!["未知开发数据".into()],
+            Vec::new(),
+            vec!["未知数据目录由后端按当前用户环境解析".into()],
+        ),
+        ScanScope::Default {
+            workspace_roots: Some(roots),
+        } if roots.is_empty() => (
+            vec!["工具缓存".into(), "Agent 数据".into(), "未知开发数据".into()],
+            Vec::new(),
+            vec!["已明确跳过项目目录扫描".into()],
+        ),
+        ScanScope::Default {
+            workspace_roots: Some(roots),
+        } => (vec!["工具缓存".into(), "Kondo 项目".into(), "Agent 数据".into(), "未知开发数据".into()], roots.clone(), Vec::new()),
+        ScanScope::Default {
+            workspace_roots: None,
+        } => (
+            vec!["工具缓存".into(), "Kondo 项目".into(), "Agent 数据".into(), "未知开发数据".into()],
+            env_workspace_roots(),
+            vec!["工作区目录由后端自动解析".into()],
+        ),
+    }
+}
+
+/// Returns a provider/root preview only; it does not run providers or read
+/// files from the workspace.
+#[tauri::command]
+pub fn get_scan_scope_preview(
+    _state: State<'_, AppState>,
+    scope: ScanScope,
+) -> Result<ScanScopePreviewDto, CommandError> {
+    let (providers, workspace_roots, mut warnings) = scope_preview_parts(&scope);
+    Ok(ScanScopePreviewDto {
+        scope,
+        providers,
+        known_locations: workspace_roots.clone(),
+        workspace_roots,
+        deferred_locations: vec!["外部工具报告的缓存目录".into()],
+        warnings: {
+            warnings.push("预览不会读取文件内容或创建清理计划".into());
+            warnings
+        },
+    })
+}
+
+/// Returns the application-owned data directory used by this Tauri process.
+#[tauri::command]
+pub fn get_app_data_info(state: State<'_, AppState>) -> Result<AppDataInfoDto, CommandError> {
+    let data_dir = state.model.lock().unwrap().data_dir().display().to_string();
+    Ok(AppDataInfoDto {
+        data_dir,
+        backend_mode: "tauri".into(),
     })
 }
 
