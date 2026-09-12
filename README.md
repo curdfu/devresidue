@@ -9,6 +9,14 @@ DevResidue 用于识别、分类、预览并谨慎管理开发环境中不断积
 > [!IMPORTANT]
 > DevResidue 是 **Developer Storage Manager**，不是系统垃圾清理器。它不处理 Windows Update、注册表、浏览器数据、系统服务、驱动或“一键优化 Windows”等系统级清理任务。
 
+## 桌面界面预览
+
+桌面概览将扫描结果按风险、数据来源和预计空间占用汇总，并提供受控的清理入口。
+
+<p align="center">
+  <img src="doc/images/devresidue-dashboard-overview.png" alt="DevResidue 桌面端概览：扫描结果、风险分布与清理入口" width="960">
+</p>
+
 ## 当前状态
 
 项目当前处于开发阶段（workspace 版本 `0.1.0`），尚未提供正式安装包、签名发布物或 GUI 打包版本。建议从源码构建并先使用 `--dry-run` 熟悉扫描和清理流程。
